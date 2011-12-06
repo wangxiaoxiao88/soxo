@@ -9,3 +9,4 @@
 *.gz
 *.tar
 *.zip
+.gitignore
