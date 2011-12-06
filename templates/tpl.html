@@ -1,0 +1,22 @@
+{%include("tpl2.html")%}
+<a></a>
+{% if shit %}
+    {% if fuck %}
+    <td>${ name }</td><td>${value}</td>
+	{% elif not fuck%}
+	${ name+value}
+    {% endif %}
+{% endif %}
+<a></a>
+{%for a,b in dicts%}
+    ${a}<span></span>${b}<a></a>
+    {%for k in keys%}
+        ${k}
+        {%if k%}
+            ${val}
+		{%else%}
+			${val}
+        {%endif%}<p></p>
+        <div></div>
+    {%endfor%}
+{%endfor%}

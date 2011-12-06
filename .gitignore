@@ -1,0 +1,11 @@
+*#
+*.cfg
+*.py[co~#]
+*.bak
+*.cfg[~#]
+*.sql
+*.db
+*.pid
+*.gz
+*.tar
+*.zip
