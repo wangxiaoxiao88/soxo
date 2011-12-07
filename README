@@ -1,0 +1,52 @@
+Title: a flask-bottle-like micro python web framework
+Version: 0.1beta3
+Last-Modified: 2012-12-07
+Author: shuxiang29@gmail.com
+Created: 2011-09-13
+Python-Version: 2.6+
+License: BSD
+
+免责声明
+========
+
+一个简单的类Flask框架，由本人写的一个类Django框架改成
+框架只是为了让比本菜鸟还菜鸟的人理解Web框架而已，请勿用在实际开发中
+代码烂得可以，懒得整理，大家忍受吧！
+本人愿意添加好玩的新功能，有BUG或者什么意见建议欢迎提供！
+
+使用说明
+========
+
+使用：from soxo import * 即可使用, 见最下面代码例子
+模板支持过滤器，继承，使用Soxo实例的register_filter来添加过滤器
+session，cookie，request，query_str对象可以直接在请求处理函数中使用
+提供一个g对象来在一个请求中暂存一些东西
+支持flask风格的url参数
+支持自定义http错误处理器，和请求前请求后出来器，你也可以自己添加更多
+开启debug可以使用静态文件来开发，并有简单的错误trace
+详细例子请看最下面的__main__里面的例子，谢谢
+
+开发时使用python soxo.py -e 应用模块.Soxo实例名 -h 0.0.0.0 -p 8080
+来启动开发服务器，可以自动重载修改过的模块，其中-h -p 不是必需的
+-h 默认localhost，-p默认9000
+例如：python soxo.py wsgi.app -h 0.0.0.0 -p 8080 
+
+
+最简单例子
+=========
+
+::
+
+    from soxo import *
+
+    co = Soxo()
+    co.debug = True
+    @co.route('/')
+    def index():
+        return 'hello, world'
+   
+    co.run()#use wsgiref
+
+
+更多详细使用例子见examples文件夹
+运行examples：python soxo.py -e test.co -h 127.0.0.1 -p 8080

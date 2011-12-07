@@ -1,3 +1,4 @@
+.gitignore
 *#
 *.cfg
 *.py[co~#]
@@ -9,4 +10,4 @@
 *.gz
 *.tar
 *.zip
-.gitignore
+
