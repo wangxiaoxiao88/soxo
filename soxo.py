@@ -817,7 +817,7 @@ class Soxo(Module):
         #先匹配module，再匹配app自己
         for prefix_url, module in self.modules:
             if path.startswith(prefix_url):
-                return module.url_dispatch(path.replace(prefix_url, ''), req_info, handlers=self.handlers)
+                return module.url_dispatch(path.replace(prefix_url, '', 1), req_info, handlers=self.handlers)
         else:
             return super(Soxo, self).url_dispatch(path, req_info)
         
