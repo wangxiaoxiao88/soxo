@@ -19,29 +19,34 @@ from types import FunctionType as fn_type
 #########################################################################
 ######简单模板系统代码------支持filter，extends，include， 和一些复杂表达式
 #########################################################################
-#tag have endtag
-__TAG__ = (
-    '\s?if',#0-n white space + if
-    '\s?for',
-    )
-#end tag
-__END_TAG__ = (
-    '\s?endif',
-    '\s?endfor',
-    )
-__end_tag__ = (
-    'endif',
-    'endfor',
-    )
-#elif,else
-__elif_else__ = (
-    '\s?elif',
-    '\s?else',
-    )
 
 class Template(object):
-
+    #{%%} tag
     delimiter = re.compile(r"\{\%\s?(.*?)\s?\%\}")
+    
+    #val echo pattern
+    echo_pattern = re.compile(r"(\$\{.*?\})")
+    echo_val_pattern = re.compile(r"\$\{\s?(.*?)\s?\}")
+    
+    #tag have endtag
+    __TAG__ = (re.compile('\s?if'), re.compile('\s?for'),)
+    #end tag
+    __END_TAG__ = ( re.compile('\s?endif'), re.compile('\s?endfor'),)
+    __end_tag__ = ('endif', 'endfor',)
+    #elif,else
+    __ELIF_ELSE__ = (re.compile('\s?elif'), re.compile('\s?else'),)
+    
+    #extend pattern
+    extend_pattern = re.compile(r"""\{\%\s?extends\s+[\'\"]{1}(.*)[\"\']{1}\%\}""")
+    #block pattern
+    block_pattern = re.compile(r"\{\%\s?block\s+([_a-z0-9A-Z]{1,})\s?\%\}")
+    #extend, block replace pattern
+    replace_pattern = (re.compile(r'\{\%\s?block\s+.*?\s?\%\}'), 
+            re.compile(r'\{\%\s?endblock\s?\%\}'),
+            re.compile(r'\{\%\s?extends\s+.*?\s?\%\}')
+            )
+    #include pattern
+    include_pattern = re.compile(r'^include\(\"(.*)\"\)$')
     
     def __init__(self,path):
         self.path = path
@@ -62,7 +67,7 @@ class Template(object):
     def handle_extends(self, tpl, extends_ptr=None):
         self.extends.insert(0, tpl)
         if not extends_ptr:
-            extends_ptr = re.compile(r"""\{\%\s?extends\s+[\'\"]{1}(.*)[\"\']{1}\%\}""")
+            extends_ptr = self.__class__.extend_pattern
         match_obj = re.match(extends_ptr,tpl)
         if match_obj:
             self.handle_extends( self.getTemplate(self.dirname+'/'+match_obj.group(1)), extends_ptr)
@@ -74,7 +79,7 @@ class Template(object):
         else:
             origin = self.extends[0]
             if len(self.extends) > 1:
-                block_ptr = re.compile(r"""\{\%\s?block\s+([_a-z0-9A-Z]{1,})\s?\%\}""")
+                block_ptr = self.__class__.block_pattern
                 blocks = re.findall(block_ptr, origin)
                 b_pts = [re.compile(r"""\{\%\s?block\s+"""+b+"""\s?\%\}(.*?)\{\%\s?endblock\s?\%\}""", re.S) for b in blocks]
 
@@ -91,18 +96,18 @@ class Template(object):
                         b_pts.extend([re.compile(r"""\{\%\s?block\s+"""+b+"""\s?\%\}(.*?)\{\%\s?endblock\s?\%\}""", re.S) \
                                 for b in sub_blocks])
             #del extends and block, endblock tags
-            origin = re.sub(r'\{\%\s?block\s+.*?\s?\%\}', '', origin)
-            origin = re.sub(r'\{\%\s?endblock\s?\%\}', '', origin)
-            origin = re.sub(r'\{\%\s?extends\s+.*?\s?\%\}', '', origin)
+            origin = re.sub(self.__class__.replace_pattern[0], '', origin)
+            origin = re.sub(self.__class__.replace_pattern[1], '', origin)
+            origin = re.sub(self.__class__.replace_pattern[2], '', origin)
+
             return origin
 
     #return the codes of template
     def getCode(self,template):
         codes = [(False,"",0)]#(is_tag,code,level)
-
-        all = self.delimiter.split(template)
-        tag = self.delimiter.findall(template)
-
+        
+        all = self.__class__.delimiter.split(template)
+        tag = self.__class__.delimiter.findall(template)
         for i in all:
             if i in tag:
                 line_tag_flag , tcode = self.lineTag(i)
@@ -112,12 +117,11 @@ class Template(object):
                     codes.append((line_tag_flag,tcode,self.setLevel(i,codes)))
             else:
                 codes.append((False,self.getValue(i),self.setLevel(i,codes)))
-
         return codes
 
     #for special tag
     def lineTag(self,code):
-        match_obj = re.match(r'^include\(\"(.*)\"\)$',code)
+        match_obj = re.match(self.__class__.include_pattern,code)
         if match_obj:#not none
             return False,self.getCode(self.getTemplate(self.dirname+'/'+match_obj.group(1)))
         else:
@@ -126,38 +130,40 @@ class Template(object):
     #get ${ value }
     def getValue(self,code):
         values = []
-        re_val = re.compile(r"(\$\{.*?\})")
+        re_val = self.__class__.echo_pattern
         
         vals = re_val.split(code)
         if len(vals) <= 1:
             return code
 
         for val in vals:
-            v = re.match(r"""\$\{\s?(.*?)\s?\}""",val)
+            v = re.match(self.__class__.echo_val_pattern, val)
             if v is not None:
                 values.append((True,v.group(1)))
             else:
                 values.append((False,val))
-
+        
         return values
 
     #set code's level
     def setLevel(self,co,codes):
         #further is end_tag
-        for end in __END_TAG__:
+        for end in self.__class__.__END_TAG__:
             if re.match(end,co):
                 self.is_end = True
                 return codes[-1][2]-1
+        
         #step 1
-        for tag in __elif_else__:#for elif else tag
+        for tag in self.__class__.__ELIF_ELSE__:#for elif else tag
             if re.match(tag,co):
                 return codes[-1][2]-1
+        
         #step 2, your have to finish step 1 then do step 2  
-        for tag in __TAG__:
+        for tag in self.__class__.__TAG__:
             if re.match(tag,co) and codes[-1][0]:#match,further is tag
                 self.is_end = False 
                 return codes[-1][2]+1
-
+        
         #no match,but further is tag
         if codes[-1][0] and (not self.is_end):
             self.is_end = False 
@@ -183,7 +189,7 @@ class Template(object):
         cnt = "\n"
         for _tag,_val,_level in self.codes:
             if _tag:
-                if _val not in __end_tag__:
+                if _val not in self.__class__.__end_tag__:
                     cnt = cnt + "\t\t" + "\t"*_level + _val + ":\n"
             else:
                 if type(_val) is str:
@@ -209,14 +215,14 @@ class Template(object):
             raise IOError,'tpl file is not exist'
         else:
             tpl_mtime = os.stat( self.path).st_mtime
-            
+
         if not os.path.exists(self.pypath):#如果不存在tpl_html.py文件；生成tpl_html.py文件
             #self.codes = self.getCode(self.getTemplate( self.path))
             self.handle_extends(self.getTemplate( self.path))#
             self.codes = self.getCode(self.handle_blocks())
             self.write_file()
         py_mtime = os.stat(self.pypath).st_mtime
-
+        
         if sys.modules.has_key( self.basename+"_html"):#如果已经加载模块
             if tpl_mtime > py_mtime:#reload module，如果tpl文件已经重新修改过，重新生成tpl_html.py文件并加载
                 self.handle_extends(self.getTemplate( self.path))#
@@ -240,10 +246,7 @@ class Template(object):
 #####简单模板函数，可以加到过滤器中，this code from web.py
 ###########################################################################
 def htmlquote(text):
-    """
-    Encodes `text` for raw use in HTML.
-    
-        >>> htmlquote("<'&\\">")
+    """ >>> htmlquote("<'&\\">")
         '&lt;&#39;&amp;&quot;&gt;'
     """
     text = text.replace("&", "&amp;") # Must be done first!
@@ -254,11 +257,7 @@ def htmlquote(text):
     return text
 
 def htmlunquote(text):
-    """
-    Decodes `text` that's HTML quoted.
-
-
-        >>> htmlunquote('&lt;&#39;&amp;&quot;&gt;')
+    """ >>> htmlunquote('&lt;&#39;&amp;&quot;&gt;')
         '<\\'&">'
     """
     text = text.replace("&quot;", '"')
@@ -268,17 +267,12 @@ def htmlunquote(text):
     text = text.replace("&amp;", "&") # Must be done last!
     return text
 def websafe(val):
-    """
-    Converts `val` so that it's safe for use in UTF-8 HTML.
-    
-        >>> websafe("<'&\\">")
-
+    """ >>> websafe("<'&\\">")
         '&lt;&#39;&amp;&quot;&gt;'
         >>> websafe(None)
         ''
         >>> websafe(u'\u203d')
         '\\xe2\\x80\\xbd'
-
     """
     if val is None:
         return ''
@@ -291,32 +285,16 @@ def websafe(val):
 ########静态文件服务器，可以在开发的时候用下，正式部署请换成nginx神马的
 #######################################################################
 ext_to_mimetype = {
-    '.html': 'text/html',
-    ".htm": "text/html",
+    '.html': 'text/html', ".htm": "text/html",
+    '.jpeg': 'image/jpeg', '.jpg': 'image/jpeg', ".gif": "image/gif",
     
-    '.jpeg': 'image/jpeg',
-    '.jpg': 'image/jpeg',
-    ".gif": "image/gif",
+    ".uu":  "application/octet-stream", ".exe": "application/octet-stream",
+    ".ps":  "application/postscript", ".zip": "application/zip",
+    ".sh":  "application/x-shar", ".tar": "application/x-tar", ".wav": "audio/x-wav",
+    '.pdf': 'application/pdf', ".snd": "audio/basic", ".au": "audio/basic",
     
-    ".uu":  "application/octet-stream",
-    ".exe": "application/octet-stream",
-    ".ps":  "application/postscript",
-    ".zip": "application/zip",
-    ".sh":  "application/x-shar",
-    ".tar": "application/x-tar",
-    '.pdf': 'application/pdf',
-    ".snd": "audio/basic",
-    ".au": "audio/basic",
-    ".wav": "audio/x-wav",
-    
-    '.css': 'text/css',
-    '.txt': 'text/plain',
-    ".c": "text/plain",
-    ".cc": "text/plain",
-    ".cpp": "text/plain",
-    ".h": "text/plain",
-    ".pl": "text/plain",
-    ".java": "text/plain",
+    '.css': 'text/css', '.txt': 'text/plain', ".c": "text/plain", ".cc": "text/plain",
+    ".cpp": "text/plain", ".h": "text/plain", ".pl": "text/plain", ".java": "text/plain",
 }
 BLOCK_SIZE = 4096
 class FileServerMiddleware(object):
@@ -448,7 +426,6 @@ def url_arg_parse(origin):
     return '^'+"".join(url)+'$', dict([ (i[1], i[0]) for i in args]), ''.join(modfunc_url)
 #clear func_globals
 def clear_g(gl, cl):
-
     for key in cl.keys():
         gl.pop(key, None)
 #rediretion
@@ -481,11 +458,11 @@ class G(object):
 ########query_str，session，request，三个对象每次请求都是重建的，不存在线程安全问题
 ###########################################################################
 class QueryString:
+    mshort = re.compile("[A-Z0-9a-z_]{1,}=[^=&]{1,}")
+    mlong = re.compile("([A-Z0-9a-z_]{1,}=[^=&]{1,})&([A-Z0-9a-z_]{1,}=[^=&]{1,}&){0,}[A-Z0-9a-z_]{1,}=[^=&]{1,}")
     def __init__(self,qstr):
         self.qstr = qstr
         self.data = {}
-        self.mshort = re.compile("[A-Z0-9a-z_]{1,}=[^=&]{1,}") 
-        self.mlong = re.compile("([A-Z0-9a-z_]{1,}=[^=&]{1,})&([A-Z0-9a-z_]{1,}=[^=&]{1,}&){0,}[A-Z0-9a-z_]{1,}=[^=&]{1,}")
         
         if self.isQstr(qstr):
             self.sliceEqualSign()
@@ -528,9 +505,9 @@ class QueryString:
     
     def isQstr(self,qstr):
         #match a=arg1
-        mshort = re.match(self.mshort, qstr)
+        mshort = re.match(self.__class__.mshort, qstr)
         #match a=arg1&(b=arg2&)c=arg3
-        mlong = re.match(self.mlong, qstr)
+        mlong = re.match(self.__class__.mlong, qstr)
 
         if not mshort and not mlong:
             return False
@@ -631,15 +608,16 @@ class BaseView(object):
 #app and module#--------------------------------------------------------
 class Module(object):
 
-    def __init__(self, name=__name__, url_prefix=''):
+    def __init__(self, name=__name__):
         self.name = name
-        self.url_prefix = url_prefix
         
         self.url_rules = []
         self.module = self.name
+        #handler register
+        self.handlers = {}
         
     def add_url_rule(self, rule, f, methods):
-        pattern, args, modfunc_url = url_arg_parse(self.url_prefix + rule)
+        pattern, args, modfunc_url = url_arg_parse(rule)
         self.url_rules.append((pattern, \
                 {'methods':methods, 'args':args, 'reverse_route':modfunc_url, 'callback':f, \
                 'module':self.module+'.'+f.__name__
@@ -650,6 +628,95 @@ class Module(object):
             self.add_url_rule(rule, f, methods)
             return f
         return decorator
+    
+    def invoke_handler(self, key, handlers, req_info):
+        resp = None
+        if self.handlers.has_key(key):
+            self.handlers[key].func_globals.update(req_info)
+            resp = self.handlers[key]()
+            clear_g(self.handlers[key].func_globals, req_info)
+        elif handlers and handlers.has_key(key):
+            handlers[key].func_globals.update(req_info)
+            resp = handlers[key]()
+            clear_g(handlers[key].func_globals, req_info)
+        return resp
+    
+    def arg_type_convert(self, args, types):#except URLErr
+        for k in args.keys():
+            if types[k] == 'int':
+                args[k] = int(args[k])
+            elif types[k] == 'float':
+                args[k] = float(args[k])
+        return args
+        
+    def url_dispatch(self, path, req_info, handlers={}):
+        for regex, cb_dict in self.url_rules:
+            match = re.search(regex, path)
+            #if path match a route url
+            if match:
+                #test methods allow
+                if req_info['request'].method not in cb_dict['methods']:
+                    raise Exception, req_info['request'].method + ' not allow!'
+                #get url args
+                args = match.groupdict()
+                self.arg_type_convert(args, cb_dict['args'])
+                #if has before_handler
+                self.invoke_handler('before_handler', handlers, req_info)
+                #class view enable
+                callback = cb_dict['callback']
+                if type(callback) is not fn_type:
+                    callback = callback(req_info)
+                else:
+                    callback.func_globals.update(req_info)
+                #response
+                try:
+                    resp = callback(**args)
+                    if type(callback) is fn_type:
+                        clear_g(callback.func_globals, req_info)
+                except Exception as e:
+                    if type(callback) is fn_type:#class rebuild instance, not need to clear_g
+                        clear_g(callback.func_globals, req_info)
+                    #500error
+                    resp = self.invoke_handler('error500_handler', handlers, req_info)
+                    if not resp:
+                        raise e
+                #if has after_handler
+                self.invoke_handler('after_handler', handlers, req_info)
+                return resp
+        #404
+        else:
+            resp = self.invoke_handler('error404_handler', handlers, req_info)
+            if not resp:
+                raise  Exception("404 Error----Url can't match any handler. Url can't route!")
+            return resp
+
+    def before_request(self):
+        """请求前装饰器"""
+        def decorator(f):
+            self.handlers['before_handler'] = f
+            return f
+        return decorator
+        
+    def after_request(self):
+        """请求后装饰器"""
+        def decorator(f):
+            self.handlers['after_handler'] = f
+            return f
+        return decorator
+        
+    def error_404(self):
+        """404错误处理器"""
+        def decorator(f):
+            self.handlers['error404_handler'] = f
+            return f
+        return decorator
+        
+    def error_500(self):
+        """500错误处理器"""
+        def decorator(f):
+            self.handlers['error500_handler'] = f
+            return f
+        return decorator    
 
 class Soxo(Module):
     
@@ -659,10 +726,9 @@ class Soxo(Module):
         
         self.url_rules = []
         self.module = ''
-        
-        #handler register
-        self.before_handler, self.after_handler, self.error404_handler, self.error500_handler = None, None, None, None
-        
+        self.modules = []
+        self.handlers = {}
+
         self.static = './static/'
         self.debug = False
         self.templates = 'templates/'
@@ -675,7 +741,18 @@ class Soxo(Module):
         # redis.Redis(host='localhost', port=6379, db=0), **{host:, port:, db:}
         self.redis = None
         
-        def url_for(modfunc, url_rules=self.url_rules, **args):
+        def url_for(modfunc, **args):
+            url_rules = []
+            mod, func = modfunc.split('.')
+            prefix_url = ''
+            for prefix, module in self.modules:
+                if module.name == mod:
+                    url_rules = module.url_rules
+                    prefix_url = prefix
+                    break
+            else:
+                url_rules = self.url_rules
+                
             for rule in url_rules:
                 if modfunc == rule[1]['module']:
                     types = rule[1]['args']
@@ -688,9 +765,10 @@ class Soxo(Module):
                             qs[k] = args[k]
                             del args[k]
                     try:
+                        url = prefix_url if mod else ''
                         if qs:
-                            return reverse % args + '?' + urlencode(qs)
-                        return reverse % args
+                            return url + reverse % args + '?' + urlencode(qs)  
+                        return url + reverse % args
                     except:
                         raise Exception, modfunc + "'s arguments err!"
             raise Exception, "Can't reverse route of :"+modfunc
@@ -734,6 +812,14 @@ class Soxo(Module):
         elif self.memcache:
             import memcache
             self.mc = memcache.Client(self.memcache, debug=self.debug)
+            
+    def url_dispatch(self, path, req_info):
+        #先匹配module，再匹配app自己
+        for prefix_url, module in self.modules:
+            if path.startswith(prefix_url):
+                return module.url_dispatch(path.replace(prefix_url, '', 1), req_info, handlers=self.handlers)
+        else:
+            return super(Soxo, self).url_dispatch(path, req_info)
         
     def __call__(self, environ, start_response):
         """wsgi wrapper"""
@@ -779,71 +865,9 @@ class Soxo(Module):
         #start resp
         start_response(req.status, req.headers)
         return resp
-    
-    def arg_type_convert(self, args, types):#except URLErr
-        for k in args.keys():
-            if types[k] == 'int':
-                args[k] = int(args[k])
-            elif types[k] == 'float':
-                args[k] = float(args[k])
-        return args
-        
-    def url_dispatch(self, path, req_info):
-            for regex, cb_dict in self.url_rules:
-                match = re.search(regex, path)
-                #if path match a route url
-                if match:
-                    #test methods allow
-                    if req_info['request'].method not in cb_dict['methods']:
-                        raise Exception, req_info['request'].method + ' not allow!'
-                    #get url args
-                    args = match.groupdict()
-                    self.arg_type_convert(args, cb_dict['args'])
-                    #if has before_handler
-                    if self.before_handler:
-                        self.before_handler.func_globals.update(req_info)
-                        self.before_handler()
-                        clear_g(self.before_handler.func_globals, req_info)
-                    #class view enable
-                    callback = cb_dict['callback']
-                    if type(callback) is not fn_type:
-                        callback = callback(req_info)
-                    else:
-                        callback.func_globals.update(req_info)
-                    #response
-                    try:
-                        resp = callback(**args)
-                        if type(callback) is fn_type:
-                            clear_g(callback.func_globals, req_info)
-                    except Exception as e:
-                        if type(callback) is fn_type:#class rebuild instance, not need to clear_g
-                            clear_g(callback.func_globals, req_info)
-                        #500error
-                        if self.error500_handler:
-                            if type(callback) is fn_type:
-                                clear_g(callback.func_globals, req_info)
-                            self.error500_handler.func_globals.update(req_info)
-                            resp = self.error500_handler()
-                            clear_g(self.error500_handler.func_globals, req_info)
-                            return resp
-                        raise e
-                    #if has after_handler
-                    if self.after_handler:
-                        self.after_handler.func_globals.update(req_info)
-                        self.after_handler()
-                        clear_g(self.after_handler.func_globals, req_info)
-                    return resp
-            #404
-            else:
-                if self.error404_handler:
-                    self.error404_handler.func_globals.update(req_info)
-                    resp = self.error404_handler()
-                    clear_g(self.error404_handler.func_globals, req_info)
-                    return resp
-                raise  Exception("404 Error----Url can't match any handler. Url can't route!")
-    
-    def register_module(self, module):
-        self.url_rules.extend(module.url_rules)#not + 
+
+    def register_module(self, prefix_url, module):
+        self.modules.append((prefix_url, module))
             
     def run(self, host='localhost', port=9000):
         from wsgiref.simple_server import make_server
@@ -873,36 +897,8 @@ class Soxo(Module):
         
     def run_gevent_server(self, host='localhost', port=9000):
         pass
-                
-    def before_request(self):
-        """请求前装饰器"""
-        def decorator(f):
-            self.before_handler = f
-            return f
-        return decorator
-        
-    def after_request(self):
-        """请求后装饰器"""
-        def decorator(f):
-            self.after_handler = f
-            return f
-        return decorator
-        
-    def error_404(self):
-        """404错误处理器"""
-        def decorator(f):
-            self.error404_handler = f
-            return f
-        return decorator
-        
-    def error_500(self):
-        """500错误处理器"""
-        def decorator(f):
-            self.error500_handler = f
-            return f
-        return decorator
 
-def run_devserver(entry="", host='localhost', port=9000):
+def run_devserver(entry="wsgi.app", host='localhost', port=9000):
         """just for dev"""
         from multiprocessing import Process
         import time, getopt
@@ -916,7 +912,7 @@ def run_devserver(entry="", host='localhost', port=9000):
                 print value
                 entry = value
             elif op == '-p':
-                port = value
+                port = int(value)
             elif op == '-h':
                 host = value
         #get mod.app
@@ -954,4 +950,3 @@ def run_devserver(entry="", host='localhost', port=9000):
                 
 if __name__ == "__main__":
     run_devserver()##cA5dR6Hn6kU6
-

@@ -1,3 +1,4 @@
+#coding=utf8
 ########更多功能测试的例子
 #--test qstr class
 #qstr = QueryString('2=3&a=4&a=5&3=1&b=3')
@@ -7,6 +8,7 @@
 #exit()
 
 #you only need to use "from soxo import *"; see the __all__
+from soxo import *
 co = Soxo()
 #----test url args
 @co.route('/abc/<int:xx>/')
@@ -27,7 +29,7 @@ def urltest():
     print url_for('.TestView', yy=3.3)
     return url_for('.test', xx=22)
 
-mod = Module('mod', '/mod')
+mod = Module('mod')
 @mod.route('/tt/<int:oo>/')
 def tto(oo):
     print '#############'
@@ -105,7 +107,7 @@ def multi(ab, page=1):
     return ab + str(page) + '-------------', url_for('mod.multi', ab='zz', page=100)
 
 #route first, register later
-co.register_module(mod)
+co.register_module('/mod', mod)
 
 #error handler test, when http error(404,500) occur, before_request and after request don't invole
 @co.error_404()#

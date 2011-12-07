@@ -912,7 +912,7 @@ def run_devserver(entry="wsgi.app", host='localhost', port=9000):
                 print value
                 entry = value
             elif op == '-p':
-                port = value
+                port = int(value)
             elif op == '-h':
                 host = value
         #get mod.app
