@@ -27,7 +27,10 @@ class TestView(BaseView):
 @co.route('/url/for/')
 def urltest():
     print url_for('.TestView', yy=3.3)
-    return url_for('.test', xx=22)
+    print request.environ['SERVER_NAME'], request.environ['SERVER_PROTOCOL'], \
+            request.environ['SERVER_PORT']
+    return ''.join((url_for('.test', xx=22), request.environ['SERVER_NAME'], request.environ['SERVER_PROTOCOL'], \
+            request.environ['SERVER_PORT']))
 
 mod = Module('mod')
 @mod.route('/tt/<int:oo>/')
@@ -107,7 +110,7 @@ def multi(ab, page=1):
     return ab + str(page) + '-------------', url_for('mod.multi', ab='zz', page=100)
 
 #route first, register later
-co.register_module('/mod', mod)
+co.register_module('/mod', mod)#, 'xxx')
 
 #error handler test, when http error(404,500) occur, before_request and after request don't invole
 @co.error_404()#

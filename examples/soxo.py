@@ -1,7 +1,7 @@
 #coding=utf-8
 """a micro flask like python web framework, see README for more infomation"""
 
-__all__ = ['Template', 'Module', 'Soxo', 'BaseView']
+__all__ = ['Template', 'Module', 'Soxo', 'BaseView', 'cached_attr', 'cached_property']
 
 import re, os, sys, pickle, os.path
 
@@ -454,6 +454,16 @@ class Filter(object):
 class G(object):
     def __getattr__(self, attr):
         return None
+#cached_property, user's function
+class cached_property(object):
+    def __init__(self, func):
+        self.func = func
+
+    def __get__(self, obj, cls):
+        if obj is None: return self
+        value = obj.__dict__[self.func.__name__] = self.func(obj)
+        return value
+cached_attr = cached_property
 ###########################################################################
 ########query_str，session，request，三个对象每次请求都是重建的，不存在线程安全问题
 ###########################################################################
@@ -566,7 +576,7 @@ class Session(dict):
 #request obj#--------------------------------------------------------
 class Request:
 
-    def __init__(self,environ):
+    def __init__(self,environ, server_name):
         self.method = environ.get("REQUEST_METHOD","")
         if self.method == "POST":
             try:
@@ -577,10 +587,17 @@ class Request:
                 
         path = environ.get('PATH_INFO', '')
         self.path = path if path.endswith('/') else path + '/'
+        
+        self.server_name = environ.get('SERVER_NAME', '')
+        self.subdomain = environ.get('SERVER_NAME', '').replace(server_name, '')
+        
+        self.is_xhr = environ.get('HTTP_X_REQUESTED_WITH','').lower() == 'xmlhttprequest'
+        self.is_ajax = self.is_xhr
                 
         self.status = "200 0k"
         self.headers = []
         self.env = environ
+        self.environ = environ
         
     def save2file(self,name,path=None):
         if (self.form[name].type).lower() in 'text/plain':
@@ -610,6 +627,7 @@ class Module(object):
 
     def __init__(self, name=__name__):
         self.name = name
+        self.subdomain = ''
         
         self.url_rules = []
         self.module = self.name
@@ -720,9 +738,10 @@ class Module(object):
 
 class Soxo(Module):
     
-    def __init__(self, name=__name__):
+    def __init__(self, name=__name__, server_name=''):
         self.name = name
         self.url_prefix = ''
+        self.server_name = server_name.replace('www','') if server_name.startswith('www.') else '.'+server_name
         
         self.url_rules = []
         self.module = ''
@@ -816,7 +835,13 @@ class Soxo(Module):
     def url_dispatch(self, path, req_info):
         #先匹配module，再匹配app自己
         for prefix_url, module in self.modules:
-            if path.startswith(prefix_url):
+            #subdomain match
+            if module.subdomain and req_info['request'].subdomain == module.subdomain:
+                #subdomain support multi module
+                if path.startswith(prefix_url):
+                    return module.url_dispatch(path.replace(prefix_url, '', 1), req_info, handlers=self.handlers)
+            #prefix_url match
+            elif path.startswith(prefix_url):
                 return module.url_dispatch(path.replace(prefix_url, '', 1), req_info, handlers=self.handlers)
         else:
             return super(Soxo, self).url_dispatch(path, req_info)
@@ -835,7 +860,7 @@ class Soxo(Module):
             req_info['session'] = Session(mc=self.mc, cookie=req_info['cookie'], expires=self.session_expires)
         
         #handle request
-        req_info['request'] = Request(environ)
+        req_info['request'] = Request(environ, self.server_name)
         req_info.update(self.__tools__)
         
         #handle dispatch
@@ -866,7 +891,8 @@ class Soxo(Module):
         start_response(req.status, req.headers)
         return resp
 
-    def register_module(self, prefix_url, module):
+    def register_module(self, prefix_url, module, subdomain=''):
+        module.subdomain = subdomain
         self.modules.append((prefix_url, module))
             
     def run(self, host='localhost', port=9000):
@@ -950,3 +976,4 @@ def run_devserver(entry="wsgi.app", host='localhost', port=9000):
                 
 if __name__ == "__main__":
     run_devserver()##cA5dR6Hn6kU6
+
