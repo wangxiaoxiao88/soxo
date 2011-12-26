@@ -525,9 +525,7 @@ class QueryString:
 
 #session#--------------------------------------------------------
 class Session(dict):
-    def __init__(self, rs=None, mc=None, cookie=None, expires=1800):
-
-        self.mc = mc
+    def __init__(self, rs=None, cookie=None, expires=1800):
         self.rs = rs
         self.cookie = cookie
         self.expires = expires
@@ -540,36 +538,41 @@ class Session(dict):
         try:
             if rc:
                 self.data = self.rs.get(self.sessionID)
-            elif mc:
-                self.data = pickle.loads( self.mc.get(self.sessionID) )
         except:
             self.data = {}
             
-    def setExpires(self,expires):
-        self.expires = expires
+    def set_expires(self, expires=None):
+        if self.rs:
+            self.rs.expire(self.sessionID, expires if expires else self.expires)
         
     def __getitem__(self,key):
-        return self.data[key]
+        return self.get(key)
     
     def get(self, key, default=None):
-        return self.data.get(key, default)
+        data = self.data.get(key, default)
+        if data is not None:
+            self.set_expires()
+        return data
     
     def __setitem__(self,key,value):
         self.data[key] = value
+        self.save()
+        self.set_expires()
 
     def id(self,key):
         self.sessionID
     
     def __delitem__(self,key):
         del self.data[key]
+        self.save()
+        
+    def clear(self):
+        self.data = {}
+        self.save()
         
     def save(self):
         if self.rs:
             self.rs.set(self.sessionID, self.data)
-            self.rs.expire(self.expires)
-        elif self.mc:
-            self.pickledata = pickle.dumps(self.data)
-            self.mc.set(self.sessionID, self.pickledata, time=self.expires)
         self.cookie["__soxo_session_id"] = self.sessionID
         self.cookie["__soxo_session_id"]['expires'] = self.expires
 
@@ -734,7 +737,7 @@ class Module(object):
         def decorator(f):
             self.handlers['error500_handler'] = f
             return f
-        return decorator    
+        return decorator
 
 class Soxo(Module):
     
@@ -755,8 +758,6 @@ class Soxo(Module):
         self.cookie_expires = 24*30*60  #one day
         self.session_expires = 1800#30*60, if cookie_expires < session_expires, s_e = c_e
         
-        # ['127.0.0.1:11211']
-        self.memcache = None
         # redis.Redis(host='localhost', port=6379, db=0), **{host:, port:, db:}
         self.redis = None
         
@@ -804,8 +805,8 @@ class Soxo(Module):
             return Template(tpl_dir + tpl)(**kw)
         
         #给处理函数使用的
-        self.__tools__.update({'quote':htmlquote,'unquote':htmlunquote,'safe':websafe, \
-                'render':render,'Template':Template,'redirect':redirect})
+        self.__tools__.update({ 'render':render,'Template':Template,'redirect':redirect, \
+                'quote':htmlquote,'unquote':htmlunquote,'safe':websafe})
         
         self.init_session()
         
@@ -823,14 +824,10 @@ class Soxo(Module):
         self.filters['unquote'] = Filter(htmlunquote)
     
     def init_session(self):
-        """建立session，需要memcache或者redis"""
-        #if redis or memcache addr is set, session enable, redis come first
+        """建立session"""
         if self.redis:
             import redis
             self.rs = redis.Redis(**self.redis)
-        elif self.memcache:
-            import memcache
-            self.mc = memcache.Client(self.memcache, debug=self.debug)
             
     def url_dispatch(self, path, req_info):
         #先匹配module，再匹配app自己
@@ -856,8 +853,6 @@ class Soxo(Module):
         req_info['query_str'] = QueryString(environ["QUERY_STRING"])
         if self.redis:
             req_info['session'] = Session(rs=self.rs, cookie=req_info['cookie'], expires=self.session_expires)
-        elif self.memcache:
-            req_info['session'] = Session(mc=self.mc, cookie=req_info['cookie'], expires=self.session_expires)
         
         #handle request
         req_info['request'] = Request(environ, self.server_name)
@@ -865,10 +860,6 @@ class Soxo(Module):
         
         #handle dispatch
         resp =  self.url_dispatch(req_info['request'].path, req_info)
-        
-        #session.save
-        if self.redis or self.memcache:
-            req_info['session'].save()
         
         #cookie handle
         req = req_info['request']
@@ -941,7 +932,7 @@ def run_devserver(entry="wsgi.app", host='localhost', port=9000):
                 port = int(value)
             elif op == '-h':
                 host = value
-        #get mod.app
+        #get module.instance
         mod = entry.split('.')[0]
         ins = entry.split('.')[-1] if len(entry.split('.')) > 1 else 'app'
         app = getattr(__import__(mod), ins)

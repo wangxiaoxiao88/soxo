@@ -1,4 +1,4 @@
-.gitignore
+*.gitignore
 *#
 *.cfg
 *.py[co~#]
