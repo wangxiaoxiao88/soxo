@@ -3,7 +3,7 @@
 
 __all__ = ['Template', 'Module', 'Soxo', 'BaseView', 'cached_attr', 'cached_property']
 
-import re, os, sys, pickle, os.path
+import re, os, sys, pickle, os.path, cgi
 
 from datetime import datetime
 from copy import deepcopy
@@ -175,7 +175,7 @@ class Template(object):
     #write to file
     def write_file(self):###
         """use to create a *_html.py file"""
-        f = open(self.pypath,'w')
+        f = open(self.pypath,'wb')
 
         f.writelines("#coding=utf-8\n")
         f.writelines("class Temp:\n")
@@ -192,12 +192,12 @@ class Template(object):
                 if _val not in self.__class__.__end_tag__:
                     cnt = cnt + "\t\t" + "\t"*_level + _val + ":\n"
             else:
-                if type(_val) is str:
+                if type(_val) is str or type(_val) is unicode:
                     cnt = cnt + "\t\t" + "\t"*_level + "self.html.append( \"\"\"" + _val + "\"\"\")\n"
                 else:
                     for _flag,_value in _val:
                         if _flag:
-                            cnt = cnt + "\t\t" + "\t"*_level + "self.html.append( str(" + _value + "))\n"
+                            cnt = cnt + "\t\t" + "\t"*_level + "self.html.append( unicode(" + _value + "))\n"
                         else:
                             cnt = cnt + "\t\t" + "\t"*_level + "self.html.append( \"\"\"" + _value + "\"\"\")\n"
         f.writelines(cnt)
@@ -381,9 +381,8 @@ class ExceptionMiddleware(object):
         """Call the application can catch exceptions."""
         appiter = None
         try:
-            appiter = self.app(environ, start_response)
-            for item in appiter:
-                yield item
+            appiter = ''.join( self.app(environ, start_response))
+            return appiter
         except:
             e_type, e_value, tb = exc_info()
             traceback = ['Traceback (most recent call last):']
@@ -394,7 +393,7 @@ class ExceptionMiddleware(object):
                                ('Content-Type', 'text/plain')])
             except:
                 pass
-            yield '\n'.join(traceback)
+            return (u'\n'.join(traceback)).encode('utf8')
 
         if hasattr(appiter, 'close'):
             appiter.close()
@@ -467,7 +466,7 @@ cached_attr = cached_property
 ###########################################################################
 ########query_str，session，request，三个对象每次请求都是重建的，不存在线程安全问题
 ###########################################################################
-class QueryString:
+class QueryString(object):
     mshort = re.compile("[A-Z0-9a-z_]{1,}=[^=&]{1,}")
     mlong = re.compile("([A-Z0-9a-z_]{1,}=[^=&]{1,})&([A-Z0-9a-z_]{1,}=[^=&]{1,}&){0,}[A-Z0-9a-z_]{1,}=[^=&]{1,}")
     def __init__(self,qstr):
@@ -534,37 +533,41 @@ class Session(dict):
             self.sessionID = self.cookie["__soxo_session_id"].value
         except:
             self.sessionID = md5(str(datetime.now())).hexdigest()
-            
+        
+        self.data = None
         try:
-            if rc:
-                self.data = self.rs.get(self.sessionID)
+            self.data = self.rs.get(self.sessionID)
+            self.data = pickle.loads(self.data) if self.data else {}
         except:
             self.data = {}
             
     def set_expires(self, expires=None):
-        if self.rs:
-            self.rs.expire(self.sessionID, expires if expires else self.expires)
+        self.rs.expire(self.sessionID, expires if expires else self.expires)
         
     def __getitem__(self,key):
         return self.get(key)
     
     def get(self, key, default=None):
         data = self.data.get(key, default)
-        if data is not None:
-            self.set_expires()
+        self.set_expires()
         return data
     
     def __setitem__(self,key,value):
         self.data[key] = value
         self.save()
-        self.set_expires()
 
     def id(self,key):
         self.sessionID
     
     def __delitem__(self,key):
-        del self.data[key]
-        self.save()
+        if key in self.data:
+            del self.data[key]
+            self.save()
+        
+    def pop(self, key, default=None):
+        data = self.data.get(key, default)
+        del self[key]
+        return data
         
     def clear(self):
         self.data = {}
@@ -572,21 +575,18 @@ class Session(dict):
         
     def save(self):
         if self.rs:
-            self.rs.set(self.sessionID, self.data)
+            self.rs.set(self.sessionID, pickle.dumps(self.data))
         self.cookie["__soxo_session_id"] = self.sessionID
         self.cookie["__soxo_session_id"]['expires'] = self.expires
 
 #request obj#--------------------------------------------------------
-class Request:
+class Request(object):
 
     def __init__(self,environ, server_name):
         self.method = environ.get("REQUEST_METHOD","")
-        if self.method == "POST":
-            try:
-                self.form = cgi.FieldStorage(environ["wsgi.input"],
+
+        self.files = cgi.FieldStorage(environ["wsgi.input"] if environ.has_key('wsgi.input') else None,
                         environ=environ,keep_blank_values=1)
-            except Exception as e:
-                print ("init form error!...", e)
                 
         path = environ.get('PATH_INFO', '')
         self.path = path if path.endswith('/') else path + '/'
@@ -602,15 +602,28 @@ class Request:
         self.env = environ
         self.environ = environ
         
+        self.form = self.files
+        
+#    def __contains__(self, name):
+#        return (name in self._wrapped)
+#
+#    def getlist(self, name):
+#        return self._wrapped.getall(name)
+        
+    def set_req(self, session, cookie, qstr):
+        self.session = session
+        self.cookie = cookie
+        self.query_str = qstr
+        
     def save2file(self,name,path=None):
-        if (self.form[name].type).lower() in 'text/plain':
+        if (self.files[name].type).lower() in 'text/plain':
             return
         if not path:
-            path = self.form[name].filename
+            path = self.files[name].filename
 
         f = file(path,'wb')
         f.flush()
-        f.write(self.form[name].value)
+        f.write(self.files[name].value)
         f.close()
         
 ###########################################################################
@@ -624,6 +637,7 @@ class BaseView(object):
     def __call__(self,**args):
         callback = getattr(self, self.req_info['request'].method.lower())
         callback.func_globals.update(self.req_info)
+        callback.func_globals['req_info'] = self.req_info
         return callback(**args)
 #app and module#--------------------------------------------------------
 class Module(object):
@@ -689,6 +703,7 @@ class Module(object):
                     callback = callback(req_info)
                 else:
                     callback.func_globals.update(req_info)
+                    callback.func_globals['req_info'] = req_info
                 #response
                 try:
                     resp = callback(**args)
@@ -697,8 +712,11 @@ class Module(object):
                 except Exception as e:
                     if type(callback) is fn_type:#class rebuild instance, not need to clear_g
                         clear_g(callback.func_globals, req_info)
-                    #500error
-                    resp = self.invoke_handler('error500_handler', handlers, req_info)
+                    ###new http exceptions
+                    if e.message and type(e.message) is int and e.message != 500:
+                        resp = self.invoke_handler('error%d_handler' % e.message, handlers, req_info)
+                    else:
+                        resp = self.invoke_handler('error500_handler', handlers, req_info)
                     if not resp:
                         raise e
                 #if has after_handler
@@ -758,6 +776,9 @@ class Soxo(Module):
         self.cookie_expires = 24*30*60  #one day
         self.session_expires = 1800#30*60, if cookie_expires < session_expires, s_e = c_e
         
+        self.csrf_session_key = ''
+        self.csrf_enabled = True
+        
         # redis.Redis(host='localhost', port=6379, db=0), **{host:, port:, db:}
         self.redis = None
         
@@ -808,8 +829,6 @@ class Soxo(Module):
         self.__tools__.update({ 'render':render,'Template':Template,'redirect':redirect, \
                 'quote':htmlquote,'unquote':htmlunquote,'safe':websafe})
         
-        self.init_session()
-        
     def register_filter(name):
         """注册一个过滤器"""
         def decorator(f):
@@ -856,6 +875,9 @@ class Soxo(Module):
         
         #handle request
         req_info['request'] = Request(environ, self.server_name)
+        request = req_info['request']
+        request.csrf_session_key, request.csrf_enabled = self.csrf_session_key, self.csrf_enabled
+        request.set_req(req_info.get('session',None), req_info['cookie'], req_info['query_str'])
         req_info.update(self.__tools__)
         
         #handle dispatch
@@ -880,7 +902,7 @@ class Soxo(Module):
             
         #start resp
         start_response(req.status, req.headers)
-        return resp
+        return ''.join(resp).encode('utf8')
 
     def register_module(self, prefix_url, module, subdomain=''):
         module.subdomain = subdomain
@@ -890,6 +912,7 @@ class Soxo(Module):
         from wsgiref.simple_server import make_server
         #debug mode can serve static file and check trace
         app = self
+        app.init_session()
         if self.debug:
             import gzip
             import StringIO
@@ -903,6 +926,7 @@ class Soxo(Module):
         from wsgiserver import CherryPyWSGIServer
         #debug mode can serve static file and check trace
         app = self
+        app.init_session()
         if self.debug:
             import gzip
             import StringIO
@@ -913,7 +937,17 @@ class Soxo(Module):
         server.start()
         
     def run_gevent_server(self, host='localhost', port=9000):
-        pass
+        from gevent.pywsgi import WSGIServer
+        #debug mode can serve static file and check trace
+        app = self
+        app.init_session()
+        if self.debug:
+            import gzip
+            import StringIO
+            app = FileServerMiddleware(app, self.static)
+            app = ExceptionMiddleware(app)
+        
+        WSGIServer((host, port), app).serve_forever()
 
 def run_devserver(entry="wsgi.app", host='localhost', port=9000):
         """just for dev"""
@@ -950,7 +984,7 @@ def run_devserver(entry="wsgi.app", host='localhost', port=9000):
             app = __import__(entry.split('.')[0])
             app = getattr(app, entry.split('.')[-1])
             
-            p = Process(target=app.run, args=(host, port, ))
+            p = Process(target=app.run_cherrypy_server, args=(host, port, ))
             p.start()
             try:
                 while True:

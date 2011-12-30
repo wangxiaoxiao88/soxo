@@ -1,5 +1,5 @@
 Title: a flask-bottle-like micro python web framework
-Version: 0.1beta4
+Version: 0.12
 Author: shuxiang29@gmail.com
 Created: 2011-09-13
 Python-Version: 2.5+
@@ -29,9 +29,10 @@ session，cookie，request，query_str对象可以直接在请求处理函数中
 
 开发时使用python soxo.py -e 应用模块.Soxo实例名 -h 0.0.0.0 -p 8080
 来启动开发服务器，可以自动重载修改过的模块，其中-h -p 不是必需的
--h 默认localhost，-p默认9000
+-h 默认localhost，-p 默认9000 -e 默认wsgi.app
 例如：python soxo.py wsgi.app -h 0.0.0.0 -p 8080 
 
+另外增加了3个扩展，方便大家开发；分别是wtforms, sqlalchemy, permissions
 
 最简单例子
 =========
@@ -46,8 +47,9 @@ session，cookie，request，query_str对象可以直接在请求处理函数中
     def index():
         return 'hello, world'
    
-    co.run()#use wsgiref
+    co.run()#use cherrypy server
 
 
 更多详细使用例子见examples文件夹
 运行examples：cd examples;python soxo.py -e test.co -h 127.0.0.1 -p 8080
+
