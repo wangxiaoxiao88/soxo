@@ -70,30 +70,24 @@ def _generate_csrf_token():
 class Form(BaseForm):
 
     """
-    Subclass of WTForms **Form** class. The main difference is that
-    **request.form** is passed as `formdata` argument to constructor
-    so can handle request data implicitly. 
-
     In addition this **Form** implementation has automatic CSRF handling.
     """
 
     csrf = fields.HiddenField()
 
-    def __init__(self, formdata=None, *args, **kwargs):
+    def __init__(self, request=None, *args, **kwargs):
     
-        formdata = request
+        formdata = request.form
         self.request = request
 
-        csrf_enabled = kwargs.pop('csrf_enabled', None)
-        self.csrf_enabled = csrf_enabled
+        self.csrf_enabled = kwargs.pop('csrf_enabled', None)
+        if not self.csrf_enabled:
+            self.csrf_enabled = self.request.csrf_enabled
 
         self.csrf_session_key = kwargs.pop('csrf_session_key', None)
-
-        if self.csrf_session_key is None:
-            self.csrf_session_key = \
-                current_app.config.get('CSRF_SESSION_KEY', '_csrf_token')
-
-        csrf_token = request.session.get(self.csrf_session_key, None)
+        if not self.csrf_session_key:
+            self.csrf_session_key = request.csrf_session_key
+        csrf_token = self.request.session.get(self.csrf_session_key, None)
 
         if csrf_token is None:
             csrf_token = self.reset_csrf()
@@ -101,19 +95,19 @@ class Form(BaseForm):
         super(Form, self).__init__(formdata, csrf=csrf_token, *args, **kwargs)
 
     def is_submitted(self):
-        return request and request.method in ("PUT", "POST")
+        return self.request and self.request.method in ("PUT", "POST")
 
     def process(self, formdata=None, obj=None, **kwargs):
 
         if self.is_submitted():
         
             if formdata is None:
-                formdata = request
+                formdata = self.request
 
             # ensure csrf validation occurs ONLY when formdata is passed
             # in case "csrf" is the only field in the form
 
-            if not formdata and not request.files:
+            if not formdata and not self.request.files:
                 self.csrf_is_valid = False
             else:
                 self.csrf_is_valid = None
@@ -299,15 +293,14 @@ html5.DecimalRangeField = DecimalRangeField
 class FileField(_FileField):
     """
     Subclass of **wtforms.FileField** providing a `file` property
-    returning the relevant **FileStorage** instance in **request.files**.
     """
     @property
     def file(self):
         """
-        Returns FileStorage class if available from request.files
+        Returns FileStorage class if available from .files
         or None
         """
-        return request.files.get(self.name, None)
+        return self.request.files.get(self.name, None)
 
 class FileRequired(object):
     """
@@ -334,7 +327,6 @@ file_required = FileRequired
 
 fields.FileField = FileField
 
-validators.file_allowed = file_allowed
 validators.file_required = file_required
 validators.FileRequired = FileRequired
 ###-----------end file fields-----------------

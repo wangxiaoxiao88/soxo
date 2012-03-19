@@ -9,6 +9,8 @@
     :license: BSD
 """
 
+__all__ = ['Role', 'Identity', 'Permission']
+
 from functools import wraps
 
 class Role(object):
@@ -26,19 +28,30 @@ class Identity(object):
     def __call__(self, f):
         @wraps(f)
         def _decorated(*args, **kw):
-            role = self.valid()#self.valid.func_globals.update(request, session)
-            if self.permission.can(role)
-                res = f(*args, **kw)#clear_g(self.valid, ~)
-                return res
+            req_info = _decorated.func_globals['req_info']
+            self.valid.func_globals.update(req_info)
+            role = self.valid()
+            for key in req_info:
+                del self.valid.func_globals[key]
+
+            print self.permission.can(role)
+            if self.permission.can(role):
+                f.func_globals.update(req_info)
+                resp = f(*args, **kw)
+                for key in req_info:
+                    del f.func_globals[key]
+                return resp
             else:
                 raise Exception(self.http_exception)
         return _decorated
         
-    def valid(self):pass
+    def valid(self):
+        """you must rewrite this method then return a named Role instance"""
+        pass
         
 class Permission(object):
     def __init__(self, *roles):
-        self.needs = set(roles)
+        self.needs = roles
 
     def require(self, http_exception=None):
         return Identity(self, http_exception)
