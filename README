@@ -27,12 +27,10 @@ session，cookie，request，query_str对象可以直接在请求处理函数中
 开启debug可以再开发中使用静态文件，并有简单的错误trace
 详细例子请看最下面的__main__里面的例子，谢谢
 
-开发时使用python soxo.py -e 应用模块.Soxo实例名 -h 0.0.0.0 -p 8080
-来启动开发服务器，可以自动重载修改过的模块，其中-h -p 不是必需的
--h 默认localhost，-p 默认9000 -e 默认wsgi.app
-例如：python soxo.py wsgi.app -h 0.0.0.0 -p 8080 
+开发时使用python soxo.py ./AppMain.py
 
 另外增加了3个扩展，方便大家开发；分别是wtforms, sqlalchemy, permissions
+使用multipart1.0做表单解释。
 
 最简单例子
 =========
@@ -51,5 +49,5 @@ session，cookie，request，query_str对象可以直接在请求处理函数中
 
 
 更多详细使用例子见examples文件夹
-运行examples：cd examples;python soxo.py -e test.co -h 127.0.0.1 -p 8080
+运行examples：cd examples;python soxo.py ./test.py
 

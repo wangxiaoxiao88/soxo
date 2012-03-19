@@ -124,5 +124,5 @@ def test404():
 #    request.path = 'xx00'
         
 co.debug = True
-#co.run_cherrypy_server()#use cherrypy wsgi server
+co.run_cherrypy_server()#use cherrypy wsgi server
 
