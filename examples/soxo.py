@@ -1,6 +1,6 @@
 #coding=utf-8
 """a micro flask like python web framework, see README for more infomation"""
-__all__ = ['Template', 'Module', 'Soxo', 'BaseView', 'cached_attr', 'cached_property']
+__all__ = ['Template', 'Module', 'Soxo', 'BaseView', 'cached_attr', 'cached_property', 'Filter']
 
 import re, os, sys, pickle, os.path, cgi
 import gzip
@@ -259,8 +259,9 @@ ext_to_mimetype = {
 }
 BLOCK_SIZE = 4096
 class FileServerMiddleware(object):
-    def __init__(self, application,path):
+    def __init__(self, application, path, prefix='/static'):
         self.path = path
+        self.prefix = prefix
         self.application = application
         
     def __call__(self, environ, start_response):
@@ -270,7 +271,11 @@ class FileServerMiddleware(object):
         root, ext = os.path.splitext(path_info.lower())
         if not ext:
             return self.application(environ, start_response)
+        
+        if self.prefix:
+            path_info = path_info[len(self.prefix):]
         file_path = self.path + path_info
+        
         #if exist this file and is a file
         if not os.path.isfile(file_path):
             raise Exception, "Can't find this file: " + file_path
@@ -386,10 +391,13 @@ def clear_g(gl, cl):
 class Filter(object):
     def __init__(self, func):
         self.func = func
+        self.arg, self.kw = [], {}
     def __ror__(self, val):
-        return self(val)
-    def __call__(self, val):
-        return self.func(val)
+        self.val = val
+        return self.func(val, *self.arg, **self.kw)
+    def __call__(self, *arg, **kw):
+        self.arg, self.kw = arg, kw
+        return self
 #request Global object
 class G(object):
     def __getattr__(self, attr):
@@ -705,6 +713,7 @@ class Soxo(Module):
             else:
                 url_rules = self.url_rules
             #所有的module匹配的rule
+            #print modfunc, '----------', url_rules, '===========' 
             match_rules = filter(lambda rule: modfunc==rule[1]['module'], url_rules)
             if not match_rules:
                 raise Exception, "Can't reverse route of :"+modfunc
@@ -750,7 +759,7 @@ class Soxo(Module):
         self.__tools__.update({ 'render':render,'Template':Template,'redirect':redirect, \
                 'quote':htmlquote,'unquote':htmlunquote,'safe':websafe})
         
-    def register_filter(name):
+    def register_filter(self, name):
         """注册一个过滤器"""
         def decorator(f):
             self.filters[name] = Filter(f)
