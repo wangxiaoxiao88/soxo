@@ -66,7 +66,7 @@ class Template(object):
         match_obj = re.match(self.__class__.extend_pattern, tpl)
         if match_obj:
             self.handle_extends( self.getTemplate(self.basedir+match_obj.group(1)))
-    def stack_pos(self, block, son, origin=False):
+    def stack_pos(self, block, son):
         """找到block的开始和终结点"""
         sb_list = re.finditer(self.__class__.block_pattern, son)#在子html中找到block
         endb_list = re.finditer(self.__class__.replace_pattern[1], son)#在子html中找到endblock
@@ -100,7 +100,7 @@ class Template(object):
                         for i,b in enumerate(blocks):
                             sub_pos = self.stack_pos(b, son)
                             if sub_pos:
-                                p_pos = self.stack_pos(b, origin, True)
+                                p_pos = self.stack_pos(b, origin)
                                 if p_pos:
                                     origin = origin[:p_pos[0]] + son[sub_pos[0]:sub_pos[1]] + origin[p_pos[1]:]
                         #find new block in son, 查找子html的block, 加入block列表, 进入另一个子html
