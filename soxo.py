@@ -37,9 +37,9 @@ class Template(object):
     #block pattern
     block_pattern = re.compile(r"\{\%\s?block\s+([_a-z0-9A-Z]{1,})\s?\%\}")
     #extend, block replace pattern
-    replace_pattern = (re.compile(r'\{\%\s?block\s+.*?\s?\%\}'), 
+    replace_pattern = (re.compile(r'\{\%\s?block\s+[a-z0-9A-Z_]+\s?\%\}'), 
             re.compile(r'\{\%\s?endblock\s?\%\}'),
-            re.compile(r'\{\%\s?extends\s+.*?\s?\%\}')
+            re.compile(r'\{\%\s?extends\s+[a-z0-9A-Z_]+\s?\%\}')
             )
     #include pattern
     include_pattern = re.compile(r'^include\(\"(.*)\"\)$')
@@ -61,15 +61,31 @@ class Template(object):
         f.close()
         return template
     #handle extends
-    def handle_extends(self, tpl, extends_ptr=None):
+    def handle_extends(self, tpl):
         self.extends.insert(0, tpl)
-        if not extends_ptr:
-            extends_ptr = self.__class__.extend_pattern
-        match_obj = re.match(extends_ptr,tpl)
+        match_obj = re.match(self.__class__.extend_pattern, tpl)
         if match_obj:
-            self.handle_extends( self.getTemplate(self.basedir+match_obj.group(1)), extends_ptr)
-    #handle block
-    def handle_blocks(self):
+            self.handle_extends( self.getTemplate(self.basedir+match_obj.group(1)))
+    def stack_pos(self, block, son, origin=False):
+        """找到block的开始和终结点"""
+        sb_list = re.finditer(self.__class__.block_pattern, son)#在子html中找到block
+        endb_list = re.finditer(self.__class__.replace_pattern[1], son)#在子html中找到endblock
+        b_list = [(sb.end(), sb, sb.group(1)) for sb in sb_list] + [(endb.end(), endb, 0) for endb in endb_list]
+        b_list.sort(key=lambda x: x[0])
+
+        _stack, startb, endb = 0, None, None
+        for i, sb in enumerate(b_list):
+            if sb[2] == block:
+                for eb in b_list[i+1:]:
+                    if eb[2]:
+                        _stack += 1
+                    else:
+                        _stack -= 1
+                    if _stack < 1:
+                        return sb[1].start(), eb[1].end()
+        return None
+    #new block handle
+    def new_handle_blocks(self):
         if not self.extends:
             return ''
         else:
@@ -77,21 +93,21 @@ class Template(object):
             if len(self.extends) > 1:
                 block_ptr = self.__class__.block_pattern
                 blocks = re.findall(block_ptr, origin)
-                b_pts = [re.compile(r"""\{\%\s?block\s+"""+b+"""\s?\%\}(.*?)\{\%\s?endblock\s?\%\}""", re.S) for b in blocks]
-
                 if blocks:
                     sons = self.extends[1:]
                     for son in sons:
                         #replace origin block
                         for i,b in enumerate(blocks):
-                            sm = re.search(b_pts[i], son)
-                            if sm:
-                                origin = re.sub(b_pts[i], sm.group(), origin)
-                        #find new block in son
+                            sub_pos = self.stack_pos(b, son)
+                            if sub_pos:
+                                p_pos = self.stack_pos(b, origin, True)
+                                if p_pos:
+                                    origin = origin[:p_pos[0]] + son[sub_pos[0]:sub_pos[1]] + origin[p_pos[1]:]
+                        #find new block in son, 查找子html的block, 加入block列表, 进入另一个子html
                         sub_blocks = re.findall(block_ptr, son)
-                        b_pts.extend([re.compile(r"""\{\%\s?block\s+"""+b+"""\s?\%\}(.*?)\{\%\s?endblock\s?\%\}""", re.S) \
-                                for b in sub_blocks])
-            #del extends and block, endblock tags
+                        if sub_blocks:
+                            blocks = list(set(blocks + sub_blocks))
+            #del block, endblock, extends tags
             origin = re.sub(self.__class__.replace_pattern[0], '', origin)
             origin = re.sub(self.__class__.replace_pattern[1], '', origin)
             origin = re.sub(self.__class__.replace_pattern[2], '', origin)
@@ -197,9 +213,10 @@ class Template(object):
         mod_name = self.dirname.replace('/','.')+'.'+self.basename+"_html"
         #如果不存在tpl_html.py文件；生成tpl_html.py文件; 或者debug模式，存在文件，也重新生成
         if not os.path.exists(self.pypath) or self.debug:
-            self.handle_extends(self.getTemplate( self.path))#
-            self.codes = self.getCode(self.handle_blocks())
-            self.write_file()      
+            self.handle_extends(self.getTemplate( self.path))
+            #self.codes = self.getCode(self.handle_blocks())
+            self.codes = self.getCode(self.new_handle_blocks())
+            self.write_file()
             sys.modules.pop(mod_name, None)
 
         __import__(mod_name)#加载
@@ -257,7 +274,7 @@ ext_to_mimetype = {
     '.css': 'text/css', '.txt': 'text/plain', ".c": "text/plain", ".cc": "text/plain",
     ".cpp": "text/plain", ".h": "text/plain", ".pl": "text/plain", ".java": "text/plain",'.js':'text/javascript'
 }
-BLOCK_SIZE = 4096
+BLOCK_SIZE = 12288
 class FileServerMiddleware(object):
     def __init__(self, application, path, prefix='/static'):
         self.path = path
@@ -277,6 +294,9 @@ class FileServerMiddleware(object):
         file_path = self.path + path_info
         
         #if exist this file and is a file
+        if file_path.endswith('staticn.ico'):
+            start_response("404 Not Found", [])
+            return ''
         if not os.path.isfile(file_path):
             raise Exception, "Can't find this file: " + file_path
         #if is allowed mime type file
