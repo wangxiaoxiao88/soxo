@@ -2,20 +2,20 @@
 <a></a>
 {% if shit %}
     {% if fuck %}
-    <td>${ name }</td><td>${value}</td>
+    <td>{{ name }}</td><td>{{value}</td>
 	{% elif not fuck%}
-	${ name+value}
+    	{{ name+value}}
     {% endif %}
 {% endif %}
 <a></a>
 {%for a,b in dicts%}
-    ${a}<span></span>${b}<a></a>
+    {{a}}<span></span>{{b}}<a></a>
     {%for k in keys%}
-        ${k}
+        {{k}}
         {%if k%}
-            ${val}
+            {{val}}
 		{%else%}
-			${val}
+			{{val}}
         {%endif%}<p></p>
         <div></div>
     {%endfor%}

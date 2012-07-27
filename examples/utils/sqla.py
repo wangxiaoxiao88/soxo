@@ -255,6 +255,7 @@ class SQLAlchemy(object):
         
         #for get_model
         self.__models_set = {}
+        self.BaseQuery = BaseQuery
 
     def create_all(self):
         """Creates all tables."""

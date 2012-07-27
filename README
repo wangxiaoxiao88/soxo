@@ -1,7 +1,7 @@
 Title: a flask-bottle-like micro python web framework
-Version: 0.12
+Version: 0.13
 Author: shuxiang29@gmail.com
-Created: 2011-09-13
+Created: 2012-07-27
 Python-Version: 2.5+
 License: BSD
 
@@ -30,7 +30,14 @@ session，cookie，request，query_str对象可以直接在请求处理函数中
 开发时使用python soxo.py ./AppMain.py
 
 另外增加了3个扩展，方便大家开发；分别是wtforms, sqlalchemy, permissions
-使用multipart1.0做表单解释。
+使用multipart1.0做表单解释
+
+Update
+=========
+
+support jinja2: see examples/test.py config
+support config: see examples/test.py
+support hmac session: default use cookie to store hmac encrypt session if redis is not config
 
 最简单例子
 =========

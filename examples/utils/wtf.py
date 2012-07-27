@@ -80,7 +80,7 @@ class Form(BaseForm):
         formdata = request.form
         self.request = request
 
-        csrf_enabled = kwargs.pop('csrf_enabled', None)
+        self.csrf_enabled = kwargs.pop('csrf_enabled', None)
         if not self.csrf_enabled:
             self.csrf_enabled = self.request.csrf_enabled
 

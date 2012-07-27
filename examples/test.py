@@ -9,7 +9,21 @@
 
 #you only need to use "from soxo import *"; see the __all__
 from soxo import *
-co = Soxo()
+import redis
+
+config = {
+        'static': '/home/sx/docs/soxo/soxo/examples/static',
+        'template_dir': 'templates',    #os.path.join('/static', 'abc/123.jpg')
+        'template_type': 'default',     #default or jinja2
+        'cookie_expires': 24*30*60,     #one day
+        'session_expires': 1800,        #30*60, if cookie_expires < session_expires, s_e = c_e
+        'csrf_session_key': '',         #use to session hmac serect too
+        'csrf_enabled': True,
+        'domain': 'test.com',           #domain without www and subdomain
+        'redis': None#redis.Redis(host='localhost', port=6379, db=0)     #if no None, use redis to store session, else cookie
+}
+
+co = Soxo(config=config)
 #----test url args
 @co.route('/abc/<int:xx>/')
 def test(xx):
@@ -47,9 +61,7 @@ def tpl():
             'dicts':[(2,"2"),(3,"3"),(4,"4")],'keys':(1,2,3,4), \
             'val':"what the fuck"}
     
-    tpl = Template("templates/tpl2.html")#if use Template, tpl config useless
-    return tpl(test='ooxx')
-    #return render('tpl.html', **ns)
+    return render('tpl.html', **ns)
     
 @co.route('/filter/')
 def fil():
@@ -62,6 +74,10 @@ def block():
 @co.route('/block2/')
 def block():
     return render('sub2.html')
+
+@co.route('/jinja2/')
+def jinja2():
+    return render('jinja2.html')
 #----test cookie
 @co.route('/w/')
 def wc():

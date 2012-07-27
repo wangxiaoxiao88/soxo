@@ -5,6 +5,7 @@ __all__ = ['Template', 'Module', 'Soxo', 'BaseView', 'cached_attr', 'cached_prop
 import re, os, sys, pickle, os.path, cgi
 import gzip
 import inspect
+import hashlib, time, base64
 from cStringIO import StringIO
 from urllib import urlencode
 
@@ -65,7 +66,9 @@ class Template(object):
         self.extends.insert(0, tpl)
         match_obj = re.match(self.__class__.extend_pattern, tpl)
         if match_obj:
-            self.handle_extends( self.getTemplate(self.basedir+match_obj.group(1)))
+            self.handle_extends( self.getTemplate( \
+                            os.path.join(self.basedir, match_obj.group(1)) \
+                    ))
     def stack_pos(self, block, son):
         """找到block的开始和终结点"""
         sb_list = re.finditer(self.__class__.block_pattern, son)#在子html中找到block
@@ -131,7 +134,9 @@ class Template(object):
     #for special tag
     def lineTag(self,code):
         match_obj = re.match(self.__class__.include_pattern,code)
-        return (False,self.getCode(self.getTemplate(self.basedir+match_obj.group(1)))) if match_obj else (True, code)
+        return (False,self.getCode(self.getTemplate( \
+                        os.path.join(self.basedir, match_obj.group(1)) \
+                ))) if match_obj else (True, code)
     #get ${ value }
     def getValue(self,code):
         values = []
@@ -431,6 +436,30 @@ class cached_property(object):
         value = obj.__dict__[self.func.__name__] = self.func(obj)
         return value
 cached_attr = cached_property
+#hmac encrypt function, for session secret
+def encrypt(strs, is_encrypt = 1, key = 'soxo'): 
+    dynkey = hashlib.new('sha1', str(time.time())).hexdigest() if is_encrypt == 1 else strs[0:40] 
+    dykey1 = dynkey[0:20] 
+    dykey2 = dynkey[20:] 
+  
+    fixnkey = hashlib.new('sha1', key).hexdigest() 
+    fixkey1 = fixnkey[0:20] 
+    fixkey2 = fixnkey[20:] 
+ 
+    newkey = hashlib.new('sha1', dykey1 + fixkey1 + dykey2 + fixkey2).hexdigest()
+ 
+    if(is_encrypt == 1): 
+        newstr = fixkey1 + strs + dykey2 
+    else:  
+        newstr = base64.b64decode(strs[40:].replace('_', '=')) 
+ 
+    re = '' 
+    strlen = len(newstr) 
+    for i in range(0, strlen): 
+        j = i % 40 
+        re += chr(ord(newstr[i]) ^ ord(newkey[j])) 
+  
+    return dynkey + base64.b64encode(re).replace('=', '_') if is_encrypt == 1 else re[20:-20] 
 ###########################################################################
 ########query_str，session，request，三个对象每次请求都是重建的，不存在线程安全问题
 class QueryString(object):
@@ -482,23 +511,41 @@ class QueryString(object):
 
 #session#--------------------------------------------------------
 class Session(dict):
-    def __init__(self, rs=None, cookie=None, expires=1800*4):#two hours
+    def __init__(self, rs=None, secret_key='soxo', cookie=None, expires=1800*4):#two hours
         self.rs = rs
         self.cookie = cookie
         self.expires = expires
-        
-        if self.cookie.has_key('__soxo_session_id'):
-            self.sessionID = self.cookie["__soxo_session_id"].value
+        self.secret_key = secret_key
+        #store in cookie
+        if not self.rs:
+            if self.cookie.has_key('__soxo_session_id'):
+                self.sessionID = 'soxo_session_cookie_store'
+                try:
+                    self.data = pickle.loads( encrypt( \
+                            str(self.cookie["__soxo_session_id"].value), 0, key=self.secret_key \
+                            ))
+                except:
+                    self.data = {}
+        #store in redis
         else:
-            self.sessionID = str(uuid4())
-        try:
-            data = self.rs.get(self.sessionID)
-            self.data = pickle.loads(data) if data else {}
-        except:
-            self.data = {}
+            if self.cookie.has_key('__soxo_session_id'):
+                self.sessionID = self.cookie["__soxo_session_id"].value
+            else:
+                self.sessionID = str(uuid4())
+            #try:
+            _s = self.rs.get(self.sessionID)
+            if _s:
+                self.data = pickle.loads(str(_s))#if unpicle unicode string, KeyError happen
+            else:
+                self.data = {}
+            #except:
+            #    self.data = {}
             
     def set_expires(self, expires=None):
-        self.rs.expire(self.sessionID, expires if expires else self.expires)
+        if not self.rs:
+            self.cookie["__soxo_session_id"]['expires'] = expires if expires else self.expires
+        else:
+            self.rs.expire(self.sessionID, expires if expires else self.expires)
         
     def __getitem__(self,key):
         return self.get(key)
@@ -531,7 +578,9 @@ class Session(dict):
     def save(self):
         if self.rs:
             self.rs.set(self.sessionID, pickle.dumps(self.data))
-        self.cookie["__soxo_session_id"] = self.sessionID
+            self.cookie["__soxo_session_id"] = self.sessionID
+        else:
+            self.cookie["__soxo_session_id"] = encrypt(pickle.dumps(self.data), 1, key = self.secret_key)
         self.cookie["__soxo_session_id"]['expires'] = self.expires
 
 #request obj#--------------------------------------------------------
@@ -544,7 +593,10 @@ class Request(object):
         path = environ.get('PATH_INFO', '')
         self.path = path if path.endswith('/') else path + '/'
         self.server_name = environ.get('SERVER_NAME', '')
-        self.subdomain = environ.get('SERVER_NAME', '').replace(server_name, '')
+
+        self.subdomain = self.server_name.replace(server_name, '')
+        self.subdomain = self.subdomain[:-1] if self.subdomain.endswith('.') else self.subdomain
+        self.subdomain = '' if self.subdomain == 'www' else self.subdomain
         
         self.is_ajax = self.is_xhr = environ.get('HTTP_X_REQUESTED_WITH','').lower() == 'xmlhttprequest'
         self.is_post, self.is_get = self.method == 'POST', self.method == 'GET'
@@ -576,10 +628,8 @@ class BaseView(object):
 #app and module#--------------------------------------------------------
 class Module(object):
     def __init__(self, name=__name__):
-        self.name = name
-        self.subdomain = ''
         self.url_rules = []
-        self.module = self.name
+        self.module = name if name else self.__name__
         self.handlers = {}
         
     def add_url_rule(self, rule, f, methods):
@@ -592,7 +642,7 @@ class Module(object):
     def route(self, rule, methods=('GET',)):
         def decorator(f):
             self.add_url_rule(rule, f, methods)
-            if not hasattr(f, '__spec'):#@
+            if (not hasattr(f, '__spec')) and type(f) is fn_type:#@
                 setattr(f, '__spec', inspect.getargspec(f))
             return f
         return decorator
@@ -661,7 +711,6 @@ class Module(object):
             else:
                 resp = self.invoke_handler('error500_handler', handlers, req_info)
             if not resp:
-                print 'error in occur in', callback.__name__,'-------------------'
                 return HttpError(err=exc_info())
         #if has after_handler
         self.invoke_handler('after_handler', handlers, req_info)
@@ -700,40 +749,29 @@ class Module(object):
 
 class Soxo(Module):
     
-    def __init__(self, name=__name__, server_name=''):
-        self.name = name
+    def __init__(self, config):
         self.url_prefix = ''
-        self.server_name = server_name.replace('www','') if server_name.startswith('www.') else '.'+server_name
+        self.debug = False
+        self.module = ''
         
         self.url_rules = []
-        self.module = ''
         self.modules = []
         self.handlers = {}
 
-        self.static = '/home/sx/soft/fw/trip/static'
-        self.debug = False
-        self.templates = 'templates/'
-        
-        self.cookie_expires = 24*30*60  #one day
-        self.session_expires = 1800#30*60, if cookie_expires < session_expires, s_e = c_e
-        self.csrf_session_key = ''
-        self.csrf_enabled = True
-        # redis.Redis(host='localhost', port=6379, db=0), **{host:, port:, db:}
-        self.redis = None
+        self.config = config
         
         def url_for(modfunc, **args):
             url_rules = []
             mod, func = modfunc.split('.')
             prefix_url = ''
             for prefix, module in self.modules:
-                if module.name == mod:
+                if module.module == mod:
                     url_rules = module.url_rules
                     prefix_url = prefix
                     break
             else:
                 url_rules = self.url_rules
             #所有的module匹配的rule
-            #print modfunc, '----------', url_rules, '===========' 
             match_rules = filter(lambda rule: modfunc==rule[1]['module'], url_rules)
             if not match_rules:
                 raise Exception, "Can't reverse route of :"+modfunc
@@ -758,43 +796,49 @@ class Soxo(Module):
                 url = prefix_url if mod else ''
                 return url + reverse % args + '?' + urlencode(qs) if qs else url + reverse % args
             except:
-                return HttpError('%s\'s arguments err------past args are %s: \n accept args are %s' % (modfunc, str(args), str(rule[1]['args'])))
+                return HttpError('%s\'s arguments err------past args are %s: \n accept args are %s' \
+                            % (modfunc, str(args), str(rule[1]['args'])))
             
+        
         self.filters = {}
-        self.init_filters()
         self.__tools__ = {'url_for':url_for}
                 
-        def render( tpl="", tpl_dir=self.templates, **kw):
-            kw.update(self.__tools__)
-            #给模板注入过滤器
-            kw.update(self.filters)
-            kw.update(req_info)
-            try:
-                return Template(tpl_dir + tpl, tpl_dir, req_info['debug'])(**kw)
-            except Exception as e:
-                print ('template occur error------------')
-                return HttpError('tpl err: %s' % str(e), exc_info())
-        
+        if self.config.get('template_type', 'default') == 'jinja2':
+            from jinja2 import Environment, PackageLoader
+            self.tpl_env = Environment(loader=PackageLoader(self.config.get('template_dir', 'templates'), ''))
+
+            def render(tpl='', **kw):
+                kw.update(self.__tools__)
+                kw.update(req_info)
+                template = self.tpl_env.get_template(tpl)
+                return template.render(**kw)
+        else:
+            self.filters['safe'] = Filter(websafe)
+            self.filters['quote'] = Filter(htmlquote)
+            self.filters['unquote'] = Filter(htmlunquote)
+
+            def render(tpl="", tpl_dir=self.config.get('template_dir', 'templates'), **kw):
+                kw.update(self.__tools__)
+                kw.update(req_info)
+                #给模板注入过滤器
+                kw.update(self.filters)
+                try:
+                    return Template(os.path.join(tpl_dir, tpl), tpl_dir, self.debug)(**kw)
+                except Exception as e:
+                    return HttpError('tpl err: %s' % str(e), exc_info())
+
         #给处理函数使用的
-        self.__tools__.update({ 'render':render,'Template':Template,'redirect':redirect, \
-                'quote':htmlquote,'unquote':htmlunquote,'safe':websafe})
+        self.__tools__.update({ 'render':render, 'redirect':redirect})
         
     def register_filter(self, name):
         """注册一个过滤器"""
         def decorator(f):
-            self.filters[name] = Filter(f)
-            return self.filters[name]
+            if self.tpl_env:
+                self.tpl_env.filters[name] = f
+            else:
+                self.filters[name] = Filter(f)
+                return self.filters[name]
         return decorator
-    def init_filters(self):
-        """建立基本过滤器"""
-        self.filters['safe'] = Filter(websafe)
-        self.filters['quote'] = Filter(htmlquote)
-        self.filters['unquote'] = Filter(htmlunquote)
-    def init_session(self):
-        """建立session"""
-        if self.redis:
-            import redis
-            self.rs = redis.Redis(**self.redis)
             
     def url_dispatch(self, path, req_info):
         #先匹配module，再匹配app自己
@@ -822,16 +866,19 @@ class Soxo(Module):
         #init request
         req_info = {'g': G()}
         req_info['debug'] = self.debug
+        req_info['config'] = self.config
         #cookie and session and query_str
         req_info['cookie'] = SimpleCookie(environ.get("HTTP_COOKIE",""))
         req_info['query_str'] = QueryString(environ["QUERY_STRING"])
-        if self.redis:
-            req_info['session'] = Session(rs=self.rs, cookie=req_info['cookie'], expires=self.session_expires)
+        req_info['session'] = Session(rs=self.config.get('redis', None), \
+                        secret_key=self.config.get('csrf_session_key', 'soxo'), \
+                        cookie=req_info['cookie'], expires=self.config.get('session_expires', 0))
         #handle request
-        req_info['request'] = Request(environ, self.server_name)
+        req_info['request'] = Request(environ, self.config.get('domain', ''))
         request = req_info['request']
-        request.csrf_session_key, request.csrf_enabled = self.csrf_session_key, self.csrf_enabled
-        request.set_req(req_info.get('session',None), req_info['cookie'], req_info['query_str'])
+        request.csrf_session_key = self.config.get('csrf_session_key','')
+        request.csrf_enabled = self.config.get('csrf_enabled', '')
+        request.set_req(req_info['session'], req_info['cookie'], req_info['query_str'])
         #handle dispatch
         self.__tools__['render'].func_globals['req_info'] = req_info
         req_info.update(self.__tools__)
@@ -844,7 +891,7 @@ class Soxo(Module):
                     if not v['path']:#set cookie is useful for all request
                         v['path'] = '/'
                     if not v['expires']:
-                        v['expires'] = self.cookie_expires
+                        v['expires'] = self.config.get('cookie_expires', 0)
                 req.headers.append( ('Set-Cookie', str(v).split(': ')[1]) )
         #handle redirect
         if type(resp) is Redirect:
@@ -868,9 +915,8 @@ class Soxo(Module):
         from wsgiref.simple_server import make_server
         #debug mode can serve static file and check trace
         app = self
-        app.init_session()
         if self.debug:
-            app = FileServerMiddleware(app, self.static)
+            app = FileServerMiddleware(app, self.config.get('static', ''))
             app = ExceptionMiddleware(app)
         srv = make_server(host, port, app)
         srv.serve_forever()
@@ -879,9 +925,8 @@ class Soxo(Module):
         from wsgiserver import CherryPyWSGIServer
         #debug mode can serve static file and check trace
         app = self
-        app.init_session()
         if self.debug:
-            app = FileServerMiddleware(app, self.static)
+            app = FileServerMiddleware(app, self.config.get('static', ''))
             app = ExceptionMiddleware(app)
         server = CherryPyWSGIServer( (host, port), app)#, server_name='www.cherrypy.example')
         server.start()
@@ -890,9 +935,8 @@ class Soxo(Module):
         from gevent.pywsgi import WSGIServer
         #debug mode can serve static file and check trace
         app = self
-        app.init_session()
         if self.debug:
-            app = FileServerMiddleware(app, self.static)
+            app = FileServerMiddleware(app, self.config.get('static', ''))
             app = ExceptionMiddleware(app)
         WSGIServer((host, port), app).serve_forever()
 
@@ -933,3 +977,4 @@ def run_devserver():
 if __name__ == "__main__":
     run_devserver()##cA5dR6Hn6kU6
 
+#*support jinja2, *support config, *support hmac session

@@ -1,14 +1,14 @@
 <h1>some</h1>
 <table>
 <form action='.' method='post'>
-    ${form.hidden_tag()}
+    {{form.hidden_tag()}}
     <tr>
-        <th>${form.title.label}</th>
-        <td>${form.title}</td>
+        <th>{{form.title.label}}</th>
+        <td>{{form.title}}</td>
     </tr>
     <tr>
-        <th>${form.submit.label}</th>
-        <td>${form.submit}</td>
+        <th>{{form.submit.label}}</th>
+        <td>{{form.submit}}</td>
     </tr>
 </form>
 </table>

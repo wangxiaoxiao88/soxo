@@ -33,7 +33,8 @@ class Identity(object):
             role = self.valid()
             for key in req_info:
                 del self.valid.func_globals[key]
-                
+
+            print self.permission.can(role)
             if self.permission.can(role):
                 f.func_globals.update(req_info)
                 resp = f(*args, **kw)

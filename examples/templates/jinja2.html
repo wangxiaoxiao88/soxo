@@ -1,0 +1,9 @@
+{%extends "p_tpl.html"%}
+{%block box%}
+<h1>jinja2, !!!!!!!!!!!!!!! ooxx {{"<>%/&" | e}} {{ config.template_type }} {{request.method}}</h1>
+<h2>{{"<a href=''>abc</a>" | striptags}}</h2>
+{%block sub%}
+{%endblock%}
+
+{%endblock%}
+
