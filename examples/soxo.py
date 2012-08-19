@@ -1,13 +1,13 @@
 #coding=utf-8
 """a micro flask like python web framework, see README for more infomation"""
-__all__ = ['Template', 'Module', 'Soxo', 'BaseView', 'cached_attr', 'cached_property', 'Filter']
+__all__ = ['Module', 'Soxo', 'BaseView', 'cached_attr', 'cached_property', 'Filter']
 
 import re, os, sys, pickle, os.path, cgi
 import gzip
 import inspect
 import hashlib, time, base64
 from cStringIO import StringIO
-from urllib import urlencode
+from urllib import urlencode, unquote
 
 from sys import exc_info
 from traceback import format_tb
@@ -427,6 +427,8 @@ class Filter(object):
 class G(object):
     def __getattr__(self, attr):
         return None
+    def get(self, *arg, **kw):
+        return self.__dict__.get(*arg, **kw)
 #cached_property, user's function
 class cached_property(object):
     def __init__(self, func):
@@ -475,6 +477,8 @@ class QueryString(object):
         strs = self.qstr.split('&')
         for item in strs:
             k,v = item.split('=')
+            k = unquote(k).decode('utf8')
+            v = unquote(v).decode('utf8')
             if self.data.has_key(k):
                 if not type(self.data[k]) is list:
                     self.data[k] = [self.data[k]]
@@ -706,8 +710,8 @@ class Module(object):
             if type(callback) is fn_type:#class rebuild instance, not need to clear_g
                 clear_g(callback.func_globals, req_info)
             ##new http exceptions
-            if e.message and type(e.message) is int and e.message != 500:
-                resp = self.invoke_handler('error%d_handler' % e.message, handlers, req_info)
+            if e.args and type(e.args[0]) is int and e.args[0] != 500:
+                resp = self.invoke_handler('error%d_handler' % e.args[0], handlers, req_info)
             else:
                 resp = self.invoke_handler('error500_handler', handlers, req_info)
             if not resp:
@@ -749,7 +753,7 @@ class Module(object):
 
 class Soxo(Module):
     
-    def __init__(self, config):
+    def __init__(self, config=None):
         self.url_prefix = ''
         self.debug = False
         self.module = ''
@@ -758,7 +762,9 @@ class Soxo(Module):
         self.modules = []
         self.handlers = {}
 
-        self.config = config
+        self.config = G()
+        if config:
+            self.config.__dict__.update(config)
         
         def url_for(modfunc, **args):
             url_rules = []
@@ -782,15 +788,19 @@ class Soxo(Module):
                 rules = filter(lambda m: m[1]['args'].keys()==args.keys(), match_rules)
                 if not rules:
                     arg_counts = [len( filter(lambda arg: arg in m[1]['args'], args)) for m in match_rules]
-                    rule = match_rules[arg_counts.index(max(arg_counts))]
+                    if min(arg_counts) == max(arg_counts):#if equal match url args, args'length less is better
+                        arg_counts = [len(m[1]['args']) for m in match_rules]
+                        rule = match_rules[arg_counts.index(min(arg_counts))]
+                    else:
+                        rule = match_rules[arg_counts.index(max(arg_counts))]
                 else:
                     rule = rules[0]
             #print rule, args, '\n----------\n', match_rules
             qs, reverse = {}, rule[1]['reverse_route']
             for k in args.keys():
-                args[k] = str(args[k])
+                #args[k] = unicode(args[k])
                 if k not in rule[1]['args']:
-                    qs[k] = args[k]
+                    qs[k] = args[k].encode('utf8') if type(args[k]) is unicode else str(args[k])
                     del args[k]
             try:
                 url = prefix_url if mod else ''
@@ -813,6 +823,7 @@ class Soxo(Module):
                 template = self.tpl_env.get_template(tpl)
                 return template.render(**kw)
         else:
+            self.tpl_env = None
             self.filters['safe'] = Filter(websafe)
             self.filters['quote'] = Filter(htmlquote)
             self.filters['unquote'] = Filter(htmlunquote)
@@ -843,6 +854,7 @@ class Soxo(Module):
     def url_dispatch(self, path, req_info):
         #先匹配module，再匹配app自己
         empty_prefix, empty_prefix_module = None, None#path='/', prefix_url=''
+        match_modules = []
         for prefix_url, module in self.modules:
             #subdomain match
             if module.subdomain and req_info['request'].subdomain == module.subdomain:
@@ -854,12 +866,15 @@ class Soxo(Module):
                 continue
             #prefix_url match
             elif path.startswith(prefix_url):
-                return module.url_dispatch(path.replace(prefix_url, '', 1), req_info, handlers=self.handlers)
-        else:
-            if empty_prefix_module:
-                return empty_prefix_module.url_dispatch(path, req_info, handlers=self.handlers)
+                match_modules.append((prefix_url, module))
+                
+        if match_modules:
+            prefix_url, module = max(match_modules, key=lambda o: len(o[0]))
+            return module.url_dispatch(path.replace(prefix_url, '', 1), req_info, handlers=self.handlers)
 
-            return super(Soxo, self).url_dispatch(path, req_info)
+        if empty_prefix_module:
+            return empty_prefix_module.url_dispatch(path, req_info, handlers=self.handlers)
+        return super(Soxo, self).url_dispatch(path, req_info)
         
     def __call__(self, environ, start_response):
         """wsgi wrapper"""
@@ -871,12 +886,12 @@ class Soxo(Module):
         req_info['cookie'] = SimpleCookie(environ.get("HTTP_COOKIE",""))
         req_info['query_str'] = QueryString(environ["QUERY_STRING"])
         req_info['session'] = Session(rs=self.config.get('redis', None), \
-                        secret_key=self.config.get('csrf_session_key', 'soxo'), \
+                        secret_key=self.config.get('secret_key', 'soxo'), \
                         cookie=req_info['cookie'], expires=self.config.get('session_expires', 0))
         #handle request
         req_info['request'] = Request(environ, self.config.get('domain', ''))
         request = req_info['request']
-        request.csrf_session_key = self.config.get('csrf_session_key','')
+        request.csrf_session_key = self.config.get('secret_key','')
         request.csrf_enabled = self.config.get('csrf_enabled', '')
         request.set_req(req_info['session'], req_info['cookie'], req_info['query_str'])
         #handle dispatch
