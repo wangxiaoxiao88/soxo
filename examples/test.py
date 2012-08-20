@@ -49,7 +49,6 @@ def urltest():
 mod = Module('mod')
 @mod.route('/tt/<int:oo>/')
 def tto(oo):
-    print '#############'
     print render, url_for, request, cookie, query_str
     return url_for('mod.tto', oo=222)
 

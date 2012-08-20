@@ -5,6 +5,7 @@ __all__ = ['Module', 'Soxo', 'BaseView', 'cached_attr', 'cached_property', 'Filt
 import re, os, sys, pickle, os.path, cgi
 import gzip
 import inspect
+import imp
 import hashlib, time, base64
 from cStringIO import StringIO
 from urllib import urlencode, unquote
@@ -44,13 +45,15 @@ class Template(object):
             )
     #include pattern
     include_pattern = re.compile(r'^include\(\"(.*)\"\)$')
+    #--------for store the tpl file, but no write tpl class to file; key: file, mtime
+    module_files = {}
     
     def __init__(self, path, basedir, debug=True):
         self.path = path
         self.basename = os.path.splitext(os.path.basename(path))[0]
         self.dirname = os.path.dirname(path)
         #path store path_html.py
-        self.pypath = os.path.splitext(path)[0] + "_html.py"
+        self.pypath = os.path.splitext(path)[0] + "_html"#"_html.py"
         self.extends = []
         #templates base dir
         self.basedir = basedir
@@ -179,13 +182,19 @@ class Template(object):
         self.is_end = False 
         return codes[-1][2]
 
+    def importCode(self, code, name):
+        module = imp.new_module(name)
+        exec code in module.__dict__
+        sys.modules[name] = module
+        return module
+
     #write to file
     def write_file(self):###
-        """use to create a *_html.py file"""
-        f = open(self.pypath,'wb')
-        f.writelines("#coding=utf-8\n")
-        f.writelines("class Temp:\n")
-        f.writelines("""\tdef __init__(self,ns):\n\t\tfor k in ns.keys():\n\t\t\tglobals()[k] = ns[k]\n\t\tself.html = []\n\n""")
+        """write tpl class to self.__class__.module_files"""
+        f = []
+        f.append("#coding=utf-8\n")
+        f.append("class Temp:\n")
+        f.append("""\tdef __init__(self,ns):\n\t\tfor k in ns.keys():\n\t\t\tglobals()[k] = ns[k]\n\t\tself.html = []\n\n""")
         #out put code
         cnt = "\n"
         for _tag,_val,_level in self.codes:
@@ -201,14 +210,14 @@ class Template(object):
                             cnt = cnt + "\t\t" + "\t"*_level + "self.html.append( unicode(" + _value + "))\n"
                         else:
                             cnt = cnt + "\t\t" + "\t"*_level + "self.html.append( u\"\"\"" + _value.replace('"','\\"') + "\"\"\")\n"
-        f.writelines(cnt)
-                
-        call = """\tdef __call__(self):\n\t\treturn self.html"""
-        f.writelines(call)
-        f.close()
-    #use the namespace to execute *_html.py modules
+        f.append(cnt)
+        f.append("""\tdef __call__(self):\n\t\treturn self.html""")
+        code = u''.join(f).encode('utf8')
+        self.__class__.module_files[self.pypath] = [code, time.time()]
+        return code
+
     def render(self, **kw):
-        py_mtime,tpl_mtime = None,None
+        tpl_mtime = None
         
         if not os.path.exists(self.path):#如果不存在tpl.html文件；引起文件不存在错误
             raise IOError,'tpl file is not exist'
@@ -216,18 +225,16 @@ class Template(object):
             tpl_mtime = os.stat( self.path).st_mtime
         
         mod_name = self.dirname.replace('/','.')+'.'+self.basename+"_html"
-        #如果不存在tpl_html.py文件；生成tpl_html.py文件; 或者debug模式，存在文件，也重新生成
-        if not os.path.exists(self.pypath) or self.debug:
+        module_file = self.__class__.module_files.get(self.pypath, None)
+        if not module_file or (module_file and module_file[1] <= tpl_mtime) or self.debug:
             self.handle_extends(self.getTemplate( self.path))
-            #self.codes = self.getCode(self.handle_blocks())
             self.codes = self.getCode(self.new_handle_blocks())
-            self.write_file()
+            module_file = self.write_file()
             sys.modules.pop(mod_name, None)
 
-        __import__(mod_name)#加载
-        mod = sys.modules[mod_name]
-        ins = mod.Temp(kw)#new a class instance
-        return ins()#__call__
+        mod = self.importCode(module_file, self.pypath)
+        ins = mod.Temp(kw)
+        return ins()
 
     __call__ = render
 ###########################################################################
@@ -958,7 +965,6 @@ class Soxo(Module):
 def run_devserver():
         """just for dev"""
         from subprocess import Popen as popen
-        import time
 
         filename = sys.argv[1]
         if not filename:

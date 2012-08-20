@@ -5,6 +5,7 @@ __all__ = ['Module', 'Soxo', 'BaseView', 'cached_attr', 'cached_property', 'Filt
 import re, os, sys, pickle, os.path, cgi
 import gzip
 import inspect
+import imp
 import hashlib, time, base64
 from cStringIO import StringIO
 from urllib import urlencode, unquote
