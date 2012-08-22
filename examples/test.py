@@ -77,6 +77,7 @@ def block():
 @co.route('/jinja2/')
 def jinja2():
     return render('jinja2.html')
+
 #----test cookie
 @co.route('/w/')
 def wc():
@@ -117,6 +118,15 @@ def qstr():
 def qstr2():
     print query_str.get('abc')
     return 'ooxx'
+
+#-----test exception
+@co.route('/ex/')
+def ex():
+    a = 3
+    b = 4
+    path = url_for('.qstr2')
+    req = request
+    raise Exception('test traceback')
 
 #-----test multi route urls
 @mod.route('/m/<str:ab>/')

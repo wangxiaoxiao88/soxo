@@ -4,21 +4,17 @@ __all__ = ['Module', 'Soxo', 'BaseView', 'cached_attr', 'cached_property', 'Filt
 
 import re, os, sys, pickle, os.path, cgi
 import gzip
-import inspect
-import imp
+import inspect, imp
 import hashlib, time, base64
 from cStringIO import StringIO
 from urllib import urlencode, unquote
 
 from sys import exc_info
 from traceback import format_tb
-
 from uuid import uuid4
 from Cookie import SimpleCookie
 from types import FunctionType as fn_type
-#the only ref:: parse_form_data(environ, charset='utf8', strict=False, **kw):
 from utils.multipart import parse_form_data 
-
 #########################################################################
 ######简单模板系统代码------支持filter，extends，include， 和一些复杂表达式
 class Template(object):
@@ -45,13 +41,14 @@ class Template(object):
             )
     #include pattern
     include_pattern = re.compile(r'^include\(\"(.*)\"\)$')
+    module_files = {}
     
     def __init__(self, path, basedir, debug=True):
         self.path = path
         self.basename = os.path.splitext(os.path.basename(path))[0]
         self.dirname = os.path.dirname(path)
         #path store path_html.py
-        self.pypath = os.path.splitext(path)[0] + "_html.py"
+        self.pypath = os.path.splitext(path)[0] + "_html"#"_html.py"
         self.extends = []
         #templates base dir
         self.basedir = basedir
@@ -119,7 +116,6 @@ class Template(object):
     #return the codes of template
     def getCode(self,template):
         codes = [(False,"",0)]#(is_tag,code,level)
-        
         _all = self.__class__.delimiter.split(template)
         tag = self.__class__.delimiter.findall(template)
         for i in _all:
@@ -155,7 +151,6 @@ class Template(object):
                 values.append((False,val))
         
         return values
-
     #set code's level
     def setLevel(self,co,codes):
         #further is end_tag
@@ -180,13 +175,18 @@ class Template(object):
         self.is_end = False 
         return codes[-1][2]
 
+    def importCode(self, code, name):
+        module = imp.new_module(name)
+        exec code in module.__dict__
+        sys.modules[name] = module
+        return module
     #write to file
     def write_file(self):###
-        """use to create a *_html.py file"""
-        f = open(self.pypath,'wb')
-        f.writelines("#coding=utf-8\n")
-        f.writelines("class Temp:\n")
-        f.writelines("""\tdef __init__(self,ns):\n\t\tfor k in ns.keys():\n\t\t\tglobals()[k] = ns[k]\n\t\tself.html = []\n\n""")
+        """write tpl class to self.__class__.module_files"""
+        f = []
+        f.append("#coding=utf-8\n")
+        f.append("class Temp:\n")
+        f.append("""\tdef __init__(self,ns):\n\t\tfor k in ns.keys():\n\t\t\tglobals()[k] = ns[k]\n\t\tself.html = []\n\n""")
         #out put code
         cnt = "\n"
         for _tag,_val,_level in self.codes:
@@ -202,34 +202,30 @@ class Template(object):
                             cnt = cnt + "\t\t" + "\t"*_level + "self.html.append( unicode(" + _value + "))\n"
                         else:
                             cnt = cnt + "\t\t" + "\t"*_level + "self.html.append( u\"\"\"" + _value.replace('"','\\"') + "\"\"\")\n"
-        f.writelines(cnt)
-                
-        call = """\tdef __call__(self):\n\t\treturn self.html"""
-        f.writelines(call)
-        f.close()
-    #use the namespace to execute *_html.py modules
+        f.append(cnt)
+        f.append("""\tdef __call__(self):\n\t\treturn self.html""")
+        code = u''.join(f).encode('utf8')
+        self.__class__.module_files[self.pypath] = [code, time.time()]
+        return code
+
     def render(self, **kw):
-        py_mtime,tpl_mtime = None,None
-        
+        tpl_mtime = None
         if not os.path.exists(self.path):#如果不存在tpl.html文件；引起文件不存在错误
             raise IOError,'tpl file is not exist'
         else:
             tpl_mtime = os.stat( self.path).st_mtime
         
         mod_name = self.dirname.replace('/','.')+'.'+self.basename+"_html"
-        #如果不存在tpl_html.py文件；生成tpl_html.py文件; 或者debug模式，存在文件，也重新生成
-        if not os.path.exists(self.pypath) or self.debug:
+        module_file = self.__class__.module_files.get(self.pypath, None)
+        if not module_file or (module_file and module_file[1] <= tpl_mtime) or self.debug:
             self.handle_extends(self.getTemplate( self.path))
-            #self.codes = self.getCode(self.handle_blocks())
             self.codes = self.getCode(self.new_handle_blocks())
-            self.write_file()
+            module_file = self.write_file()
             sys.modules.pop(mod_name, None)
 
-        __import__(mod_name)#加载
-        mod = sys.modules[mod_name]
-        ins = mod.Temp(kw)#new a class instance
-        return ins()#__call__
-
+        mod = self.importCode(module_file, self.pypath)
+        ins = mod.Temp(kw)
+        return ins()
     __call__ = render
 ###########################################################################
 #####简单模板函数，可以加到过滤器中，this code from web.py
@@ -265,7 +261,6 @@ def websafe(val):
         return ''
     if isinstance(val, unicode):
         val = val.encode('utf-8')
-
     val = str(val)
     return htmlquote(val)
 #######################################################################
@@ -353,8 +348,8 @@ class FileServerMiddleware(object):
 ###########################################################################
 ########很挫的错误显示中间件，由于模板系统没有trace功能，这个其实是个废物，也是抄来的
 class HttpError(object):
-    def __init__(self, msg='', err=None):
-        self.msg, self.err = msg, err
+    def __init__(self, msg='', err=None, env=None):
+        self.msg, self.err, self.env = msg, err, env if env else {}
 class Redirect(HttpError):
     def __init__(self, status, location):
         self.status = status
@@ -371,20 +366,52 @@ class ExceptionMiddleware(object):
     """The middleware we use."""
     def __init__(self, app):
         self.app = app
+        self.stack = []#record traceback, max 500 items
+        self.htmls = """<html><head><title>ERROR DEBUG</title><style>a{text-decoration:none;}</style><script src='http://ajax.googleapis.com/ajax/libs/jquery/1.8.0/jquery.min.js'></script></head><body>%s</body><script>$(function(){$('input').hide();$('a').live('click', function(e){e.preventDefault();$('input').hide();$(this).siblings('input').show().focus();});$('input').live('keyup',function(e){if(e.keyCode==13){var tar=$(this), href=tar.siblings('a').attr('href');$.get(href+tar.val(), function(json){tar.siblings('span').html(json);})}});})</script></html>"""
     def __call__(self, environ, start_response):
         """Call the application can catch exceptions."""
+        args = QueryString(environ["QUERY_STRING"])
+        if args.get('__debug', ''):
+            src, frameid = args.get('code', ''), args.get('frame', 0)
+            if src and frameid:
+                tb = filter(lambda x: id(x[0])==int(frameid), self.stack)
+                fr = tb[0][0].tb_frame
+                try:
+                    fr.f_locals.update(tb[0][1])
+                    res = eval(src, fr.f_globals, fr.f_locals)
+                except Exception as e:res = str(e)
+                start_response("200 OK", [("Content-type", "text/html")])
+                res = unicode(res).encode('utf8').replace('>', '&gt;').replace('<', '&lt;')
+                return res
+
         appiter = self.app(environ, start_response)
         if type(appiter) is HttpError:
-            traceback = ['Traceback (most recent call last):']
-            traceback.append(appiter.msg)
+            traceback = ['<dl><dt>Traceback (most recent call last):']
+            traceback.append(appiter.msg+'</dt><dd><ul>')
+            path = environ.get('PATH_INFO', '')
             if appiter.err:
                 e_type, e_value, tb = appiter.err
-                traceback += format_tb(tb)
-                traceback.append('%s: %s' % (e_type, e_value))
-            start_response("500 Internal Server Error", [("Content-type", "text/plain")])
-            return traceback#u'\n'.join(traceback)#.encode('utf8')
-        return ''.join(appiter)
+                e_type = str(e_type)
+                e_type = e_type.replace('>', '&gt;').replace('<', '&lt;')
+                tb_f_list, tb_list,  = format_tb(tb), []
+                while tb:
+                    tb_list.append((tb, appiter.env))
+                    print appiter.env
+                    _ftb, _tb = tb_f_list.pop(0), ['<li>']
+                    _ftb.replace('>', '&gt;').replace('<', '&lt;')
+                    _tb.append(_ftb[:-1])
+                    _tb.append('<a href="%s?__debug=1&frame=%d&code=">&gt;_</a><br/>' % (path, id(tb)))
+                    _tb.append('<span style="background-color:#eee;width:600px;display:block;"></span><input type="text" style="width:600px;"/></li>')
+                    traceback.append(''.join(_tb))
+                    tb = tb.tb_next
+            traceback.append('</ul><br/>%s: %s</dd></dl>' % (e_type, e_value))
 
+            if len(self.stack) >= 500:
+                self.stack = self.stack[10:]
+            self.stack = self.stack + tb_list
+            start_response("500 Internal Server Error", [("Content-type", "text/html")])
+            return [self.htmls % (''.join(traceback).replace('\n', '<br/>'))]
+        return ''.join(appiter)
 ###########################################################################
 ########框架核心用到的一些函数和对象，不解释
 #url_arg_parse#--------------------------------------------------------
@@ -473,7 +500,6 @@ class QueryString(object):
         self.data = {}
         if self.isQstr(qstr):
             self.sliceEqualSign()
-
     def sliceEqualSign(self):
         strs = self.qstr.split('&')
         for item in strs:
@@ -486,7 +512,6 @@ class QueryString(object):
                 self.data[k].append(v)
             else:
                 self.data[k] = v
-        
     def getData(self):
         return self.data
     def __getitem__(self,key):
@@ -506,14 +531,12 @@ class QueryString(object):
                 raise Exception("Can't found value of %s!" % args[0])
         val = self.data.get(args[0])
         return [op(i) for i in val] if op else val
-    
     def isQstr(self,qstr):
         #match a=arg1
         mshort = re.match(self.__class__.mshort, qstr)
         #match a=arg1&(b=arg2&)c=arg3
         mlong = re.match(self.__class__.mlong, qstr)
         return False if not mshort and not mlong else True
-
 #session#--------------------------------------------------------
 class Session(dict):
     def __init__(self, rs=None, secret_key='soxo', cookie=None, expires=1800*4):#two hours
@@ -531,20 +554,16 @@ class Session(dict):
                             ))
                 except:
                     self.data = {}
+            else:
+                self.data = {}
         #store in redis
         else:
             if self.cookie.has_key('__soxo_session_id'):
                 self.sessionID = self.cookie["__soxo_session_id"].value
             else:
                 self.sessionID = str(uuid4())
-            #try:
             _s = self.rs.get(self.sessionID)
-            if _s:
-                self.data = pickle.loads(str(_s))#if unpicle unicode string, KeyError happen
-            else:
-                self.data = {}
-            #except:
-            #    self.data = {}
+            self.data = pickle.loads(str(_s)) if _s else {}
             
     def set_expires(self, expires=None):
         if not self.rs:
@@ -594,7 +613,6 @@ class Request(object):
         self.method = environ.get("REQUEST_METHOD","")
         #self.form = cgi.FieldStorage(environ["wsgi.input"] if environ.has_key('wsgi.input') else None, environ=environ,keep_blank_values=1)
         self.form, self.files = parse_form_data(environ)
-
         path = environ.get('PATH_INFO', '')
         self.path = path if path.endswith('/') else path + '/'
         self.server_name = environ.get('SERVER_NAME', '')
@@ -705,18 +723,16 @@ class Module(object):
         #response
         try:
             resp = callback(**args)
-            if type(callback) is fn_type:
-                clear_g(callback.func_globals, req_info)
         except Exception as e:##use httperr, err=500, err=401...
-            if type(callback) is fn_type:#class rebuild instance, not need to clear_g
-                clear_g(callback.func_globals, req_info)
-            ##new http exceptions
             if e.args and type(e.args[0]) is int and e.args[0] != 500:
                 resp = self.invoke_handler('error%d_handler' % e.args[0], handlers, req_info)
             else:
                 resp = self.invoke_handler('error500_handler', handlers, req_info)
             if not resp:
-                return HttpError(err=exc_info())
+                return HttpError(err=exc_info(), env=req_info if req_info['debug'] else None)
+        finally:
+            if type(callback) is fn_type:#class rebuild instance, not need to clear_g
+                clear_g(callback.func_globals, req_info)
         #if has after_handler
         self.invoke_handler('after_handler', handlers, req_info)
         return resp
@@ -753,7 +769,6 @@ class Module(object):
         return decorator
 
 class Soxo(Module):
-    
     def __init__(self, config=None):
         self.url_prefix = ''
         self.debug = False
@@ -809,8 +824,7 @@ class Soxo(Module):
             except:
                 return HttpError('%s\'s arguments err------past args are %s: \n accept args are %s' \
                             % (modfunc, str(args), str(rule[1]['args'])))
-            
-        
+
         self.filters = {}
         self.__tools__ = {'url_for':url_for}
                 
@@ -837,8 +851,7 @@ class Soxo(Module):
                 try:
                     return Template(os.path.join(tpl_dir, tpl), tpl_dir, self.debug)(**kw)
                 except Exception as e:
-                    return HttpError('tpl err: %s' % str(e), exc_info())
-
+                    return HttpError('tpl err: %s' % str(e), err=exc_info())
         #给处理函数使用的
         self.__tools__.update({ 'render':render, 'redirect':redirect})
         
@@ -872,7 +885,6 @@ class Soxo(Module):
         if match_modules:
             prefix_url, module = max(match_modules, key=lambda o: len(o[0]))
             return module.url_dispatch(path.replace(prefix_url, '', 1), req_info, handlers=self.handlers)
-
         if empty_prefix_module:
             return empty_prefix_module.url_dispatch(path, req_info, handlers=self.handlers)
         return super(Soxo, self).url_dispatch(path, req_info)
@@ -927,15 +939,6 @@ class Soxo(Module):
     def register_module(self, prefix_url, module, subdomain=''):
         module.subdomain = subdomain
         self.modules.append((prefix_url, module))
-    def run(self, host='localhost', port=9000):
-        from wsgiref.simple_server import make_server
-        #debug mode can serve static file and check trace
-        app = self
-        if self.debug:
-            app = FileServerMiddleware(app, self.config.get('static', ''))
-            app = ExceptionMiddleware(app)
-        srv = make_server(host, port, app)
-        srv.serve_forever()
         
     def run_cherrypy_server(self, host='localhost', port=9000):
         from wsgiserver import CherryPyWSGIServer
@@ -946,6 +949,7 @@ class Soxo(Module):
             app = ExceptionMiddleware(app)
         server = CherryPyWSGIServer( (host, port), app)#, server_name='www.cherrypy.example')
         server.start()
+    run = run_cherrypy_server
         
     def run_gevent_server(self, host='localhost', port=9000):
         from gevent.pywsgi import WSGIServer
@@ -959,8 +963,6 @@ class Soxo(Module):
 def run_devserver():
         """just for dev"""
         from subprocess import Popen as popen
-        import time
-
         filename = sys.argv[1]
         if not filename:
             print 'use command like: python soxo.py ./wsgi.py'
@@ -992,5 +994,3 @@ def run_devserver():
                 
 if __name__ == "__main__":
     run_devserver()##cA5dR6Hn6kU6
-
-#*support jinja2, *support config, *support hmac session
