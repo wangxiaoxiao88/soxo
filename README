@@ -2,7 +2,7 @@ Title: a flask-bottle-like micro python web framework
 Version: 0.13
 Author: shuxiang29@gmail.com
 Created: 2012-07-27
-Python-Version: 2.5+
+Python-Version: 2.6+
 License: BSD
 
 免责声明
@@ -38,6 +38,7 @@ Update
 support jinja2: see examples/test.py config
 support config: see examples/test.py
 support hmac session: default use cookie to store hmac encrypt session if redis is not config
+url_for can import now
 
 最简单例子
 =========

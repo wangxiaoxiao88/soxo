@@ -12,7 +12,7 @@ from soxo import *
 import redis
 
 config = {
-        'static': '/home/sx/docs/soxo/soxo/examples/static',
+        'static': '/home/sx/docs/soxo/examples/static',
         'template_dir': 'templates',    #os.path.join('/static', 'abc/123.jpg')
         'template_type': 'default',     #default or jinja2
         'cookie_expires': 24*30*60,     #one day

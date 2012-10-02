@@ -1,6 +1,6 @@
 #coding=utf-8
 """a micro flask like python web framework, see README for more infomation"""
-__all__ = ['Module', 'Soxo', 'BaseView', 'cached_attr', 'cached_property', 'Filter']
+__all__ = ['Module', 'Soxo', 'BaseView', 'cached_attr', 'cached_property', 'Filter', 'url_for']
 
 import re, os, sys, pickle, os.path, cgi
 import gzip
@@ -396,7 +396,6 @@ class ExceptionMiddleware(object):
                 tb_f_list, tb_list,  = format_tb(tb), []
                 while tb:
                     tb_list.append((tb, appiter.env))
-                    print appiter.env
                     _ftb, _tb = tb_f_list.pop(0), ['<li>']
                     _ftb.replace('>', '&gt;').replace('<', '&lt;')
                     _tb.append(_ftb[:-1])
@@ -649,15 +648,63 @@ class BaseView(object):
         callback.func_globals['req_info'] = self.req_info
         return callback(**args)
 #app and module#--------------------------------------------------------
+SOXO_MODULE, MODULES = None, []
+URLS = {}#!
+def url_for(modfunc, **args):
+    """only usable when Soxo instance inited"""
+    url_rules = []
+    mod, func = modfunc.split('.')
+    prefix_url = ''
+    for prefix, module in MODULES:
+        if module.module == mod:
+            url_rules = URLS[module.module]#!module.url_rules
+            prefix_url = prefix
+            break
+    else:
+        url_rules = URLS[SOXO_MODULE.module]#!self.url_rules
+    #所有的module匹配的rule
+    match_rules = filter(lambda rule: modfunc==rule[1]['module'], url_rules)
+    if not match_rules:
+        raise Exception, "Can't reverse route of :"+modfunc
+    #url参数匹配最多那个match_rule
+    if not args:
+        rule = filter(lambda m: not m[1]['args'], match_rules)[0]
+    else:
+        rules = filter(lambda m: m[1]['args'].keys()==args.keys(), match_rules)
+        if not rules:
+            arg_counts = [len( filter(lambda arg: arg in m[1]['args'], args)) for m in match_rules]
+            if min(arg_counts) == max(arg_counts):#if equal match url args, args'length less is better
+                arg_counts = [len(m[1]['args']) for m in match_rules]
+                rule = match_rules[arg_counts.index(min(arg_counts))]
+            else:
+                rule = match_rules[arg_counts.index(max(arg_counts))]
+        else:
+            rule = rules[0]
+    #print rule, args, '\n----------\n', match_rules
+    qs, reverse = {}, rule[1]['reverse_route']
+    for k in args.keys():
+        #args[k] = unicode(args[k])
+        if k not in rule[1]['args']:
+            qs[k] = args[k].encode('utf8') if type(args[k]) is unicode else str(args[k])
+            del args[k]
+    try:
+        url = prefix_url if mod else ''
+        return url + reverse % args + '?' + urlencode(qs) if qs else url + reverse % args
+    except:
+        return HttpError('%s\'s arguments err------past args are %s: \n accept args are %s' \
+                    % (modfunc, str(args), str(rule[1]['args'])))
+
 class Module(object):
     def __init__(self, name=__name__):
-        self.url_rules = []
+        #!self.url_rules = []
         self.module = name if name else self.__name__
         self.handlers = {}
+        URLS[self.module] = []#!
         
     def add_url_rule(self, rule, f, methods):
         pattern, args, modfunc_url = url_arg_parse(rule)
-        self.url_rules.append((pattern, \
+        #!self.url_rules.append((pattern, \
+        URLS[self.module].append((pattern, \
                 {'methods':methods, 'args':args, 'reverse_route':modfunc_url, 'callback':f, \
                 'module':self.module+'.'+f.__name__
                 }))
@@ -692,7 +739,7 @@ class Module(object):
         
     def url_dispatch(self, path, req_info, handlers={}):
         #@#new 最少args的优先, /login/ first than /<opt>/
-        match_rules, rule = filter(lambda x: re.search(x[0], path), self.url_rules[::-1]), None
+        match_rules, rule = filter(lambda x: re.search(x[0], path), URLS[self.module][::-1]), None#!self.url_rules[::-1]), None
         if not match_rules:
             resp = self.invoke_handler('error404_handler', handlers, req_info)
             if not resp:
@@ -774,56 +821,12 @@ class Soxo(Module):
         self.debug = False
         self.module = ''
         
-        self.url_rules = []
-        self.modules = []
+        URLS[self.module] = []#!self.url_rules = []
         self.handlers = {}
 
         self.config = G()
         if config:
             self.config.__dict__.update(config)
-        
-        def url_for(modfunc, **args):
-            url_rules = []
-            mod, func = modfunc.split('.')
-            prefix_url = ''
-            for prefix, module in self.modules:
-                if module.module == mod:
-                    url_rules = module.url_rules
-                    prefix_url = prefix
-                    break
-            else:
-                url_rules = self.url_rules
-            #所有的module匹配的rule
-            match_rules = filter(lambda rule: modfunc==rule[1]['module'], url_rules)
-            if not match_rules:
-                raise Exception, "Can't reverse route of :"+modfunc
-            #url参数匹配最多那个match_rule
-            if not args:
-                rule = filter(lambda m: not m[1]['args'], match_rules)[0]
-            else:
-                rules = filter(lambda m: m[1]['args'].keys()==args.keys(), match_rules)
-                if not rules:
-                    arg_counts = [len( filter(lambda arg: arg in m[1]['args'], args)) for m in match_rules]
-                    if min(arg_counts) == max(arg_counts):#if equal match url args, args'length less is better
-                        arg_counts = [len(m[1]['args']) for m in match_rules]
-                        rule = match_rules[arg_counts.index(min(arg_counts))]
-                    else:
-                        rule = match_rules[arg_counts.index(max(arg_counts))]
-                else:
-                    rule = rules[0]
-            #print rule, args, '\n----------\n', match_rules
-            qs, reverse = {}, rule[1]['reverse_route']
-            for k in args.keys():
-                #args[k] = unicode(args[k])
-                if k not in rule[1]['args']:
-                    qs[k] = args[k].encode('utf8') if type(args[k]) is unicode else str(args[k])
-                    del args[k]
-            try:
-                url = prefix_url if mod else ''
-                return url + reverse % args + '?' + urlencode(qs) if qs else url + reverse % args
-            except:
-                return HttpError('%s\'s arguments err------past args are %s: \n accept args are %s' \
-                            % (modfunc, str(args), str(rule[1]['args'])))
 
         self.filters = {}
         self.__tools__ = {'url_for':url_for}
@@ -854,6 +857,9 @@ class Soxo(Module):
                     return HttpError('tpl err: %s' % str(e), err=exc_info())
         #给处理函数使用的
         self.__tools__.update({ 'render':render, 'redirect':redirect})
+        #ref to SOXO_MODULE
+        global SOXO_MODULE
+        SOXO_MODULE = self
         
     def register_filter(self, name):
         """注册一个过滤器"""
@@ -869,7 +875,7 @@ class Soxo(Module):
         #先匹配module，再匹配app自己
         empty_prefix, empty_prefix_module = None, None#path='/', prefix_url=''
         match_modules = []
-        for prefix_url, module in self.modules:
+        for prefix_url, module in MODULES:
             #subdomain match
             if module.subdomain and req_info['request'].subdomain == module.subdomain:
                 #subdomain support multi module
@@ -938,7 +944,7 @@ class Soxo(Module):
 
     def register_module(self, prefix_url, module, subdomain=''):
         module.subdomain = subdomain
-        self.modules.append((prefix_url, module))
+        MODULES.append((prefix_url, module))
         
     def run_cherrypy_server(self, host='localhost', port=9000):
         from wsgiserver import CherryPyWSGIServer
