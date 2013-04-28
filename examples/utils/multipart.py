@@ -39,7 +39,7 @@ __license__ = 'MIT'
 
 from tempfile import TemporaryFile
 from wsgiref.headers import Headers
-import re, sys, cgi
+import re, sys
 try:
     from urlparse import parse_qs
 except ImportError: # pragma: no cover (fallback for Python 2.5)
@@ -78,10 +78,10 @@ class MultiDict(DictMixin):
     def replace(self, key, value): self.dict[key] = [value]
     def getall(self, key): return self.dict.get(key) or []
 
-    def get(self, key, default=None, index=-1, type=None):
+    def get(self, key, default=None, index=-1):
         if key not in self.dict and default != KeyError:
             return [default][index]
-        return self.dict[key][index] if not type else type(self.dict[key][index])
+        return self.dict[key][index]
 
     def iterallitems(self):
         for key, values in self.dict.iteritems():
@@ -398,17 +398,13 @@ def parse_form_data(environ, charset='utf8', strict=False, **kw):
             mem_limit = kw.get('mem_limit', 2**20)
             if content_length > mem_limit:
                 raise MultipartError("Request to big. Increase MAXMEM.")
-            data = stream.read(mem_limit)# TODO: i delete this .decode(charset)
+            data = stream.read(mem_limit).decode(charset)
             if stream.read(1): # These is more that does not fit mem_limit
                 raise MultipartError("Request to big. Increase MAXMEM.")
             data = parse_qs(data, keep_blank_values=True)
             for key, values in data.iteritems():
                 for value in values:
                     forms[key] = value
-        #for ajax file upload
-        elif content_type in ('application/octet-stream'):
-            form = cgi.FieldStorage(stream, environ=environ,keep_blank_values=1)
-            files['qqfile'] = form.file
         else:
             raise MultipartError("Unsupported content type.")
     except MultipartError:
