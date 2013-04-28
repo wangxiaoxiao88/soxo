@@ -543,7 +543,7 @@ class Soxo(Module):
         request.qstr = QueryString(environ["QUERY_STRING"])
         request.cookie = SimpleCookie(environ.get("HTTP_COOKIE",""))
         request.session = Session(rs=self.config.get('redis'), \
-                secret_key=self.config._get('csrf_session_key', ''), \
+                secret_key=self.config._get('secret_key', ''), \
                 cookie=request.cookie, expires=self.config._get('session_expires', 0))
         #handle dispatch
         resp = self.url_dispatch(request.path, request)

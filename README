@@ -1,5 +1,5 @@
 Title: a flask-bottle-like micro python web framework
-Version: 0.13
+Version: 0.14
 Author: shuxiang29@gmail.com
 Created: 2012-07-27
 Python-Version: 2.6+
@@ -19,26 +19,7 @@ License: BSD
 ========
 
 使用：from soxo import * 即可使用, 见最下面代码例子
-模板支持过滤器，继承，使用Soxo实例的register_filter来添加过滤器
-session，cookie，request，query_str对象可以直接在请求处理函数中使用
-提供一个g对象来在一个请求中暂存一些东西
-支持flask风格的url参数
-支持自定义http错误处理器，和请求前请求后出来器，你也可以自己添加更多
-开启debug可以再开发中使用静态文件，并有简单的错误trace
-详细例子请看最下面的__main__里面的例子，谢谢
-
 开发时使用python soxo.py ./AppMain.py
-
-另外增加了3个扩展，方便大家开发；分别是wtforms, sqlalchemy, permissions
-使用multipart1.0做表单解释
-
-Update
-=========
-
-support jinja2: see examples/test.py config
-support config: see examples/test.py
-support hmac session: default use cookie to store hmac encrypt session if redis is not config
-url_for can import now
 
 最简单例子
 =========
@@ -49,11 +30,12 @@ url_for can import now
 
     co = Soxo()
     co.debug = True
-    @co.route('/')
-    def index():
-        return 'hello, world'
-   
-    co.run()#use cherrypy server
+    @co.route('/123/<float:yy>/')
+	class TestView(BaseView):
+    	def get(self, yy):
+	        print yy
+	        return '123', 
+    co.run()
 
 
 更多详细使用例子见examples文件夹
